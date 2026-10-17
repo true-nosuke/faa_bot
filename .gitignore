@@ -1,1 +1,5 @@
 .env
+/.venv
+/backups
+bot.db
+USER_GUIDE.md
