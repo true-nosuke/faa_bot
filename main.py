@@ -36,9 +36,10 @@ class AcademicBot(commands.Bot):
         # Typst変換のためメッセージ本文を読む（Developer Portalで MESSAGE CONTENT INTENT をONにすること）
         intents = discord.Intents.default()
         intents.message_content = True
-        # 有効化する場合はDeveloper PortalのSERVER MEMBERS INTENTもONにする。
-        intents.members = self.config.get("ENABLE_MEMBERS_INTENT", "false").lower() in ("1", "true", "yes")
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        # 全員ランキングのため既定で有効。Developer PortalのSERVER MEMBERS INTENTもONにする。
+        intents.members = self.config.get("ENABLE_MEMBERS_INTENT", "true").lower() in ("1", "true", "yes")
+        super().__init__(command_prefix=commands.when_mentioned_or("!"), intents=intents,
+                         chunk_guilds_at_startup=intents.members)
 
     async def setup_hook(self):
         # DB列追加前にもバックアップを1回作成。通常運用の自動保存はOperationsが担当。

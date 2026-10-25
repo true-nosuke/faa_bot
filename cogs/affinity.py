@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
 import sqlite3
@@ -37,9 +38,8 @@ IDLE_GRACE_DAYS = 5
 IDLE_PENALTY = 3
 IDLE_PENALTY_MAX = 30
 IDLE_MAX_GAP = 10
-RANKING_SIZE = 10
+RANKING_PAGE_SIZE = 10
 RANKING_CACHE_SEC = 300       # ランキング結果は5分使い回す
-MEMBER_CACHE_SEC = 1800       # 直近の参加確認を30分覚える
 
 LABELS = {
     "answer": "進捗の回答",
@@ -48,6 +48,7 @@ LABELS = {
     "expire": "期限切れ",
     "chat": "チャット",
     "idle": "タスクなし",
+    "admin": "管理者による調整",
 }
 
 SCHEMA = """
@@ -98,6 +99,51 @@ def expire_points(size: str, percent: int) -> int:
     return -rnd(base * size_mult(size) * EXPIRE_RISK)
 
 
+class RankingView(discord.ui.View):
+    """表示中のサーバーのローカルキャッシュだけでページを切り替える。"""
+    def __init__(self, cog: Affinity, origin: discord.Interaction, page: int, pages: int):
+        super().__init__(timeout=300)
+        self.cog, self.origin, self.page = cog, origin, page
+        self._buttons(pages)
+
+    def _buttons(self, pages: int):
+        self.previous.disabled = self.page <= 0
+        self.next_page.disabled = self.page >= pages - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.origin.user.id:
+            await interaction.response.send_message(
+                "ページ操作は実行した人だけが使えます。`/affinity ranking`で自分の一覧を開けます。", ephemeral=True)
+            return False
+        return True
+
+    async def _change(self, interaction: discord.Interaction, offset: int):
+        error = self.cog._ranking_error(interaction.guild)
+        if error:
+            return await interaction.response.send_message(error, ephemeral=True)
+        rows = self.cog._ranking_rows(interaction.guild)
+        text, self.page, pages = self.cog._ranking_text(rows, self.page + offset)
+        self._buttons(pages)
+        await interaction.response.edit_message(content=text, view=self,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @discord.ui.button(label="前の10人", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change(interaction, -1)
+
+    @discord.ui.button(label="次の10人", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change(interaction, 1)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        try:
+            await self.origin.edit_original_response(view=self)
+        except discord.HTTPException:
+            pass
+
+
 class Affinity(commands.Cog):
     affinity = app_commands.Group(name="affinity", description="Botからの好感度", guild_only=True)
 
@@ -108,9 +154,8 @@ class Affinity(commands.Cog):
         self.db.executescript(SCHEMA)
         self.db.commit()
         self._chat_last: dict[int, float] = {}
-        self._rank_cache: dict[int, tuple[float, str]] = {}
-        # ランキングでは fetch_member / fetch_members / query_members を一切呼ばない。
-        self._known_members: dict[tuple[int, int], tuple[float, str]] = {}
+        self._rank_cache: dict[int, tuple[float, list[tuple[int, str, int]]]] = {}
+        # 起動時に取得する全メンバーキャッシュを使用。コマンドごとのメンバー照会は行わない。
 
     async def cog_load(self):
         self._backfill()
@@ -156,7 +201,43 @@ class Affinity(commands.Cog):
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (user_id, delta, reason, ref_id, note, day, now.isoformat()),
             )
+        self._rank_cache.clear()
         return delta
+
+    def adjust_by_admin(self, user_id: int, amount: int, actor_id: int, guild_id: int,
+                        message_id: int, reason: str, now: datetime) -> tuple[int, int] | None:
+        """調整・監査履歴・処理済み印を同時保存する。日次上限やタスク利用状態は変えない。"""
+        reason = reason.strip() or "理由未指定"
+        if amount == 0:
+            raise ValueError("増減値には0以外の整数を指定してください。")
+        if len(reason) > 200:
+            raise ValueError("理由は200文字以内にしてください。")
+        with self.db:
+            event = self.db.execute(
+                "INSERT OR IGNORE INTO affinity_events (user_id,reason,ref_id) VALUES (?,'admin',?)",
+                (user_id, message_id),
+            )
+            if event.rowcount == 0:
+                return None
+            self._ensure(user_id)
+            row = self.db.execute("SELECT points FROM affinity WHERE user_id=?", (user_id,)).fetchone()
+            before = row["points"]
+            after = before + amount
+            # SQLiteが整数をREALへ変換して精度を落とさないようにする。
+            if not -(2**63) <= amount < 2**63 or not -(2**63) <= after < 2**63:
+                raise ValueError("増減値または調整後の好感度が大きすぎます。")
+            note = json.dumps({"actor_id": actor_id, "guild_id": guild_id, "reason": reason},
+                              ensure_ascii=False)
+            self.db.execute("UPDATE affinity SET points=?,updated_at=? WHERE user_id=?",
+                            (after, now.isoformat(), user_id))
+            self.db.execute(
+                "INSERT INTO affinity_log (user_id,delta,reason,ref_id,note,day,created_at) "
+                "VALUES (?,?,'admin',?,?,?,?)",
+                (user_id, amount, message_id, note, self._today(now), now.isoformat()),
+            )
+        # 好感度は全サーバー共通なので全ランキングの結果を無効化する。
+        self._rank_cache.clear()
+        return before, after
 
     def _logged(self, user_id: int, reason: str, ref_id: int, day: str | None = None) -> bool:
         sql = "SELECT 1 FROM affinity_log WHERE user_id=? AND reason=? AND ref_id=?"
@@ -223,6 +304,8 @@ class Affinity(commands.Cog):
                 self.db.execute("INSERT INTO affinity_log(user_id,delta,reason,ref_id,note,day,created_at) VALUES (?,?,?,?,?,?,?)",
                     (owner_id,delta,reason,task["id"],f"大きさ:{task['size_choice']}",day,now.isoformat()))
                 total+=delta
+        if total:
+            self._rank_cache.clear()
         return total
 
     def on_expire(self, task, now: datetime) -> int:
@@ -234,31 +317,26 @@ class Affinity(commands.Cog):
         return self._add(owner, delta, "expire", now, ref_id=task["id"],
                          note=f"最終{task['percent']}%")
 
-    # ---------- チャット・ローカルメンバー情報 ----------
-    def _remember_member(self,member):
-        if member is None or member.bot or not hasattr(member,"guild"):return
-        self._known_members[(member.guild.id,member.id)]=(_time.monotonic(),discord.utils.escape_markdown(member.display_name))
+    # ---------- メンバー変更・チャット ----------
+    @commands.Cog.listener()
+    async def on_member_join(self, member):
+        self._rank_cache.pop(member.guild.id, None)
 
     @commands.Cog.listener()
-    async def on_interaction(self,interaction):
-        if interaction.guild:self._remember_member(interaction.user)
+    async def on_member_remove(self, member):
+        self._rank_cache.pop(member.guild.id, None)
 
     @commands.Cog.listener()
-    async def on_raw_reaction_add(self,payload):
-        self._remember_member(payload.member)
-
-    @commands.Cog.listener()
-    async def on_member_join(self,member):
-        self._remember_member(member);self._rank_cache.pop(member.guild.id,None)
-
-    @commands.Cog.listener()
-    async def on_member_remove(self,member):
-        self._known_members.pop((member.guild.id,member.id),None);self._rank_cache.pop(member.guild.id,None)
+    async def on_member_update(self, before, after):
+        if before.display_name != after.display_name or before.bot != after.bot:
+            self._rank_cache.pop(after.guild.id, None)
 
     @commands.Cog.listener()
     async def on_message(self,message: discord.Message):
         if message.author.bot or message.guild is None:return
-        self._remember_member(message.author)
+        # 管理コマンドそのものにはチャット加点しない（自分を調整する場合も指定値だけ増減）。
+        context = await self.bot.get_context(message)
+        if context.command is not None and context.command.name == "affinity":return
         uid=message.author.id;t=_time.monotonic()
         if t-self._chat_last.get(uid,-CHAT_COOLDOWN)<CHAT_COOLDOWN:return
         self._chat_last[uid]=t
@@ -316,60 +394,167 @@ class Affinity(commands.Cog):
     async def _before_idle(self):
         await self.bot.wait_until_ready()
 
-    # ---------- コマンド ----------
-    @affinity.command(name="me", description="自分の好感度を見る（自分にだけ表示）")
-    async def me(self, interaction: discord.Interaction):
-        uid = interaction.user.id
+    # ---------- 管理者専用のテキストコマンド（スラッシュ登録・公開ヘルプには出さない） ----------
+    @commands.group(name="affinity", hidden=True, invoke_without_command=True)
+    @commands.guild_only()
+    @commands.has_guild_permissions(administrator=True)
+    async def affinity_admin(self, ctx: commands.Context):
+        await ctx.send("使用方法：`!affinity add @ユーザー 増減値 [理由]`\n"
+                       "例：`!affinity add @ユーザー -10 誤加算の訂正`",
+                       allowed_mentions=discord.AllowedMentions.none())
+
+    @affinity_admin.command(name="add", hidden=True)
+    @commands.guild_only()
+    @commands.has_guild_permissions(administrator=True)
+    async def affinity_admin_add(self, ctx: commands.Context, user: discord.Member,
+                                 amount: int, *, reason: str = "理由未指定"):
+        if user.bot:
+            return await ctx.send("Botの好感度は調整できません。",
+                                  allowed_mentions=discord.AllowedMentions.none())
+        reason = reason.strip() or "理由未指定"
+        try:
+            result = self.adjust_by_admin(user.id, amount, ctx.author.id, ctx.guild.id,
+                                          ctx.message.id, reason, datetime.now(JST))
+        except ValueError as error:
+            return await ctx.send(str(error), allowed_mentions=discord.AllowedMentions.none())
+        if result is None:
+            return await ctx.send("このメッセージの調整はすでに処理済みです。再加算しません。",
+                                  allowed_mentions=discord.AllowedMentions.none())
+        before, after = result
+        name = discord.utils.escape_markdown(user.display_name)
+        note = discord.utils.escape_markdown(reason)
+        await ctx.send(f"🛠️ **{name}** の好感度を調整しました。\n"
+                       f"{before:+d} → **{after:+d}** pt（{amount:+d}）\n理由：{note}",
+                       allowed_mentions=discord.AllowedMentions.none())
+
+    @affinity_admin.error
+    @affinity_admin_add.error
+    async def affinity_admin_error(self, ctx: commands.Context, error: commands.CommandError):
+        if isinstance(error, commands.NoPrivateMessage):
+            text = "このコマンドはサーバー内でのみ使用できます。"
+        elif isinstance(error, commands.MissingPermissions):
+            text = "このコマンドを実行できるのは、サーバーの「管理者」権限を持つ人だけです。"
+        elif isinstance(error, commands.MemberNotFound):
+            text = "このサーバーのユーザーをメンションかユーザーIDで指定してください。"
+        elif isinstance(error, (commands.MissingRequiredArgument, commands.BadArgument)):
+            text = "使用方法：`!affinity add @ユーザー 増減値 [理由]`\n増減値は `10` や `-10` の整数です。"
+        else:
+            original = getattr(error, "original", error)
+            LOGGER.error("管理者による好感度調整でエラーが発生しました",
+                         exc_info=(type(original), original, original.__traceback__))
+            text = "調整処理でエラーが発生しました。通信エラー時は保存済みの場合があるため、好感度を確認してから再実行してください。"
+        await ctx.send(text, allowed_mentions=discord.AllowedMentions.none())
+
+    # ---------- 公開プロフィール ----------
+    def _profile_text(self, member: discord.Member, *, include_history: bool) -> str:
+        uid = member.id
         now = datetime.now(JST)
         row = self.db.execute("SELECT points FROM affinity WHERE user_id=?", (uid,)).fetchone()
         points = row["points"] if row else 0
         higher = self.db.execute("SELECT COUNT(*) FROM affinity WHERE points > ?", (points,)).fetchone()[0]
         total = self.db.execute("SELECT COUNT(*) FROM affinity").fetchone()[0] + (0 if row else 1)
         gained = self._gained_today(uid, self._today(now))
-        logs = self.db.execute(
-            "SELECT delta, reason, created_at FROM affinity_log WHERE user_id=? ORDER BY id DESC LIMIT 5",
-            (uid,),
-        ).fetchall()
+        name = discord.utils.escape_markdown(member.display_name)
         lines = [
-            f"**好感度**：**{points:+d}** pt",
-            f"**順位**：{higher + 1}位 / {total}人（全サーバー）",
+            f"**{name} の好感度**：**{points:+d}** pt",
+            f"**順位**：{higher + 1}位 / {total}人（全サーバーの記録済みユーザー）",
             f"**今日の増加**：{gained:+d} / +{DAILY_GAIN_LIMIT}（回答・チャット分）",
         ]
-        if logs:
-            lines.append("")
-            lines.append("**直近の増減**")
+        # 他人を照会する /user では履歴・管理者調整の理由を公開しない。
+        if include_history:
+            logs = self.db.execute(
+                "SELECT delta, reason, note, created_at FROM affinity_log WHERE user_id=? ORDER BY id DESC LIMIT 5",
+                (uid,),
+            ).fetchall()
+            if logs:
+                lines.extend(["", "**直近の増減**"])
             for g in logs:
                 at = datetime.fromisoformat(g["created_at"])
                 lines.append(f"`{g['delta']:+d}` {LABELS.get(g['reason'], g['reason'])}　{at:%m/%d %H:%M}")
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+                if g["reason"] == "admin" and g["note"]:
+                    try:
+                        note = json.loads(g["note"])
+                        reason = str(note.get("reason", "理由未指定"))
+                    except (ValueError, AttributeError, TypeError):
+                        reason = str(g["note"])
+                    short = reason[:100].replace("\n", " ").replace("\r", " ")
+                    lines.append("　理由：" + discord.utils.escape_markdown(short) + ("…" if len(reason) > 100 else ""))
+        return "\n".join(lines)
 
-    @affinity.command(name="ranking",description="キャッシュを使った好感度ランキング（メンバー照会APIなし）")
-    async def ranking(self,interaction: discord.Interaction):
-        guild=interaction.guild
-        self._remember_member(interaction.user)
-        cached=self._rank_cache.get(guild.id)
-        if cached and _time.monotonic()-cached[0]<RANKING_CACHE_SEC:
-            return await interaction.response.send_message(cached[1],allowed_mentions=discord.AllowedMentions.none())
-        # 同期的なDB・ローカルキャッシュ参照だけなので、並行要求もAPI照会を増やさない。
-        found=[];now=_time.monotonic()
-        for row in self.db.execute("SELECT user_id,points FROM affinity ORDER BY points DESC,user_id"):
-            member=guild.get_member(row["user_id"])
-            if member is not None:
-                if member.bot:continue
-                name=discord.utils.escape_markdown(member.display_name)
-            else:
-                known=self._known_members.get((guild.id,row["user_id"]))
-                if known is None or now-known[0]>=MEMBER_CACHE_SEC:continue
-                name=known[1]
-            found.append((name,row["points"]))
-            if len(found)>=RANKING_SIZE:break
-        lines=["# 好感度ランキング"]
-        if not found:lines.append("現在のキャッシュに、点数を持つメンバーがいません。")
-        medals={1:"🥇",2:"🥈",3:"🥉"}
-        for i,(name,points) in enumerate(found,1):lines.append(f"{medals.get(i,f'`{i}.`')} **{name}**　{points:+d} pt")
-        text="\n".join(lines)
-        self._rank_cache[guild.id]=(now,text)
-        await interaction.response.send_message(text,allowed_mentions=discord.AllowedMentions.none())
+    @affinity.command(name="my", description="自分の好感度・順位・直近の増減を公開表示")
+    async def my_affinity(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            self._profile_text(interaction.user, include_history=True), ephemeral=False,
+            allowed_mentions=discord.AllowedMentions.none())
+
+    @affinity.command(name="user", description="指定ユーザーの好感度を公開表示")
+    @app_commands.describe(user="好感度を表示するユーザー")
+    async def user_affinity(self, interaction: discord.Interaction, user: discord.Member):
+        if user.bot or user.guild.id != interaction.guild_id:
+            return await interaction.response.send_message(
+                "このサーバーのBot以外のユーザーを指定してください。", ephemeral=True)
+        await interaction.response.send_message(
+            self._profile_text(user, include_history=False), ephemeral=False,
+            allowed_mentions=discord.AllowedMentions.none())
+
+    # ---------- 全メンバーランキング（コマンドごとのメンバー取得APIなし） ----------
+    def _ranking_error(self, guild: discord.Guild | None) -> str | None:
+        if guild is None:
+            return "サーバー内で使用してください。"
+        if not self.bot.intents.members:
+            return ("全員ランキングにはメンバー情報が必要です。管理者は環境変数 "
+                    "`ENABLE_MEMBERS_INTENT=true` とDeveloper Portalの "
+                    "`SERVER MEMBERS INTENT` を両方有効にしてBotを再起動してください。")
+        if not guild.chunked:
+            return ("全メンバー情報の取得がまだ完了していないため、不完全なランキングは表示しません。"
+                    "起動直後なら少し待って再実行してください。続く場合は管理者がMembers Intent設定を確認してください。")
+        return None
+
+    def _ranking_rows(self, guild: discord.Guild) -> list[tuple[int, str, int]]:
+        cached = self._rank_cache.get(guild.id)
+        now = _time.monotonic()
+        if cached and now - cached[0] < RANKING_CACHE_SEC:
+            return cached[1]
+        points = {r["user_id"]: r["points"] for r in self.db.execute("SELECT user_id,points FROM affinity")}
+        rows = [
+            (member.id, discord.utils.escape_markdown(member.display_name[:40]), points.get(member.id, 0))
+            for member in guild.members if not member.bot
+        ]
+        rows.sort(key=lambda row: (-row[2], row[0]))
+        self._rank_cache[guild.id] = (now, rows)
+        return rows
+
+    @staticmethod
+    def _ranking_text(rows: list[tuple[int, str, int]], page: int) -> tuple[str, int, int]:
+        pages = max(1, (len(rows) + RANKING_PAGE_SIZE - 1) // RANKING_PAGE_SIZE)
+        page = min(max(0, page), pages - 1)
+        lines = ["# 好感度ランキング", f"このサーバーの全{len(rows)}人（Botを除く）｜{page + 1}/{pages}ページ"]
+        offset = page * RANKING_PAGE_SIZE
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        for rank, (_, name, points) in enumerate(rows[offset:offset + RANKING_PAGE_SIZE], offset + 1):
+            label = medals.get(rank, f"`{rank}.`")
+            lines.append(f"{label} **{name}**　{points:+d} pt")
+        if not rows:
+            lines.append("表示できるメンバーがいません。")
+        lines.append("-# 未記録は0pt。全員分を10人ずつ表示します。ページ操作は実行者のみ・5分間。")
+        return "\n".join(lines), page, pages
+
+    @affinity.command(name="ranking", description="サーバー全員の好感度ランキングを公開表示")
+    @app_commands.describe(page="ページ番号（省略すると1ページ目）")
+    async def ranking(self, interaction: discord.Interaction, page: app_commands.Range[int, 1] = 1):
+        error = self._ranking_error(interaction.guild)
+        if error:
+            return await interaction.response.send_message(error, ephemeral=True)
+        # 全メンバーの並べ替え前に受付を返し、3秒の応答期限を超えないようにする。
+        await interaction.response.defer(thinking=True, ephemeral=False)
+        rows = self._ranking_rows(interaction.guild)
+        pages = max(1, (len(rows) + RANKING_PAGE_SIZE - 1) // RANKING_PAGE_SIZE)
+        if not 1 <= page <= pages:
+            return await interaction.edit_original_response(content=f"ページは1〜{pages}を指定してください。")
+        text, index, pages = self._ranking_text(rows, page - 1)
+        view = RankingView(self, interaction, index, pages) if pages > 1 else None
+        await interaction.edit_original_response(
+            content=text, view=view, allowed_mentions=discord.AllowedMentions.none())
 
 
 async def setup(bot: commands.Bot):
