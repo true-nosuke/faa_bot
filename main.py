@@ -7,7 +7,7 @@ from discord.ext import commands
 
 BASE_DIR = Path(__file__).parent
 GUILD_IDS = [1405430304767873085, 1428304833307475990, 1502415792036249734]
-EXTENSIONS = ["cogs.general", "cogs.tasks", "cogs.affinity", "cogs.typst_render", "cogs.m45", "cogs.operations", "cogs.manual_reply"]
+EXTENSIONS = ["cogs.general", "cogs.tasks", "cogs.affinity", "cogs.typst_render", "cogs.m45", "cogs.operations", "cogs.manual_reply", "cogs.special_days"]
 
 logging.basicConfig(level=logging.INFO)
 
