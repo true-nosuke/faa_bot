@@ -352,6 +352,63 @@ class DiscordTests(unittest.IsolatedAsyncioTestCase):
             )
             await bot.remove_cog(cog.qualified_name)
 
+    def default_channel(self):
+        from cogs.special_days import DEFAULT_PUBLIC_CHANNEL_ID
+
+        channel = Mock(spec=discord.TextChannel)
+        channel.id = DEFAULT_PUBLIC_CHANNEL_ID
+        channel.guild = SimpleNamespace(id=999, me=object())
+        channel.permissions_for.return_value = SimpleNamespace(
+            view_channel=True, send_messages=True, read_message_history=True
+        )
+        self.bot.get_channel.return_value = channel
+        return channel
+
+    async def test_default_destination_first_start(self):
+        channel = self.default_channel()
+        await self.cog.initialize_default_channel()
+        settings = self.store.settings(999)[0]
+        self.assertEqual(settings["channel_id"], 1510542025110458428)
+        self.assertEqual(settings["enabled"], 1)
+        self.assertIsNone(settings["mention_role_id"])
+        self.bot.get_channel.assert_called_with(channel.id)
+        self.bot.fetch_channel.assert_not_awaited()
+
+    async def test_default_destination_preserves_existing_off(self):
+        self.default_channel()
+        self.store.configure(999, 12345, 67890, False)
+        await self.cog.initialize_default_channel()
+        await self.cog.initialize_default_channel()
+        settings = self.store.settings(999)[0]
+        self.assertEqual(settings["channel_id"], 12345)
+        self.assertEqual(settings["mention_role_id"], 67890)
+        self.assertEqual(settings["enabled"], 0)
+
+    async def test_default_destination_permission_denied(self):
+        channel = self.default_channel()
+        channel.permissions_for.return_value.send_messages = False
+        await self.cog.initialize_default_channel()
+        self.assertEqual(self.store.settings(999), [])
+
+    async def test_default_destination_not_a_text_channel(self):
+        await self.cog.initialize_default_channel()
+        self.assertEqual(len(self.store.settings()), 1)
+
+    async def test_default_destination_fetch_unavailable(self):
+        self.bot.get_channel.return_value = None
+        self.bot.fetch_channel.side_effect = discord.NotFound(
+            SimpleNamespace(status=404, reason="Not Found"), {"message": "missing"}
+        )
+        await self.cog.initialize_default_channel()
+        self.assertEqual(len(self.store.settings()), 1)
+
+    async def test_default_destination_fetch_fallback(self):
+        channel = self.default_channel()
+        self.bot.get_channel.return_value = None
+        self.bot.fetch_channel.return_value = channel
+        await self.cog.initialize_default_channel()
+        self.assertEqual(self.store.settings(999)[0]["channel_id"], channel.id)
+
     async def test_message_view_ids_stable(self):
         a = PublicView(self.cog, 100, DAY)
         b = PublicView(self.cog, 100, DAY)

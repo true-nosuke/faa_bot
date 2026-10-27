@@ -22,6 +22,8 @@ from .special_days_store import (
 
 LOGGER = logging.getLogger(__name__)
 NO_MENTIONS = discord.AllowedMentions.none()
+# User-provided initial destination. Existing /tokuyo settings always take priority.
+DEFAULT_PUBLIC_CHANNEL_ID = 1510542025110458428
 
 
 def display_events(day, events):
@@ -453,9 +455,38 @@ class SpecialDays(
         except Exception:
             LOGGER.exception("tokuyo dispatch failed; next tick will continue")
 
+    async def initialize_default_channel(self):
+        """Resolve the guild from the destination; never guess or overwrite settings."""
+        try:
+            channel = self.bot.get_channel(DEFAULT_PUBLIC_CHANNEL_ID)
+            if channel is None:
+                channel = await self.bot.fetch_channel(DEFAULT_PUBLIC_CHANNEL_ID)
+            if not isinstance(channel, discord.TextChannel):
+                LOGGER.warning("tokuyo initial destination is not a text channel")
+                return
+            if self.store.settings(channel.guild.id):
+                return
+            permissions = channel.permissions_for(channel.guild.me)
+            if not (
+                permissions.view_channel
+                and permissions.send_messages
+                and permissions.read_message_history
+            ):
+                LOGGER.warning(
+                    "tokuyo initial destination lacks required Bot permissions"
+                )
+                return
+            self.store.configure(channel.guild.id, channel.id, None, True)
+            LOGGER.info("tokuyo initial destination configured: %s", channel.id)
+        except discord.HTTPException:
+            LOGGER.warning(
+                "tokuyo initial destination could not be resolved; use /tokuyo settings"
+            )
+
     @dispatch.before_loop
     async def before_dispatch(self):
         await self.bot.wait_until_ready()
+        await self.initialize_default_channel()
 
     async def tick(self, now):
         # Reconcile already-published messages first (cancellations/notes/period changes).
