@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 LOGGER = logging.getLogger(__name__)
@@ -37,8 +41,14 @@ MAX_CONTEXT_MESSAGES = 3               # 直近の会話の件数
 MAX_REPLY_CHAIN = 3                    # 返信先をたどる段数
 MAX_OUTPUT_CHARS = 600                 # 回答の最大文字数（超えたら切る）
 
-# 口調・キャラクターはここに追記する（後から指定）。
+# 口調・キャラクターの既定値。サーバーごとに /ai persona-set で上書きできる（上書き分は ai_state.json に保存）。
 PERSONA_PROMPT = ""
+MAX_PERSONA_CHARS = 400
+
+# /ai usage に表示するGroq無料枠（gpt-oss-20b。公式の rate-limits ページの値）
+FREE_RPD = 1000
+FREE_TPD = 200_000
+STATE_FILE = Path(__file__).parent.parent / "ai_state.json"   # .env の AI_STATE_PATH でも変更可
 
 SYSTEM_PROMPT = (
     "あなたは学術ネットワークのDiscordサーバーで動くBotです。"
@@ -97,6 +107,47 @@ class AIReply(commands.Cog):
         self._last_used: dict[int, float] = {}
         self._daily: dict[int, tuple[str, int]] = {}
         self._blocked_until = 0.0   # 429後、この時刻までAPIを呼ばない
+        self.state_path = Path(config.get("AI_STATE_PATH") or STATE_FILE)
+        self.state = self._load_state()
+        self.last_limits: dict | None = None   # 直近のGroq応答のレート制限ヘッダー
+
+    # ---------- 保存データ（口調・利用量） ----------
+    def _load_state(self) -> dict:
+        try:
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        data.setdefault("personas", {})
+        data.setdefault("usage", {})
+        return data
+
+    def _save_state(self):
+        try:
+            tmp = self.state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.state, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self.state_path)
+        except OSError:
+            LOGGER.warning("ai_state.json を保存できませんでした")
+
+    def _persona_for(self, guild_id: int | None) -> str:
+        return self.state["personas"].get(str(guild_id), PERSONA_PROMPT)
+
+    def _record_usage(self, usage: dict):
+        today = datetime.now(JST).date().isoformat()
+        u = self.state["usage"]
+        if u.get("date") != today:
+            u.clear()
+            u.update(date=today, requests=0, prompt_tokens=0, completion_tokens=0)
+        u["requests"] += 1
+        u["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+        u["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+        self._save_state()
+
+    def _capture_limits(self, headers):
+        keys = ("limit-requests", "limit-tokens", "remaining-requests", "remaining-tokens",
+                "reset-requests", "reset-tokens")
+        self.last_limits = {k: headers.get(f"x-ratelimit-{k}") for k in keys}
+        self.last_limits["at"] = datetime.now(JST)
 
     async def cog_load(self):
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS))
@@ -106,6 +157,76 @@ class AIReply(commands.Cog):
     async def cog_unload(self):
         if self.session:
             await self.session.close()
+
+    # ---------- スラッシュコマンド ----------
+    ai = app_commands.Group(name="ai", description="AI返答の口調設定・利用状況", guild_only=True)
+
+    @staticmethod
+    def _can_edit_persona(interaction: discord.Interaction) -> bool:
+        perms = getattr(interaction.user, "guild_permissions", None)
+        return bool(perms and (perms.administrator or perms.manage_guild))
+
+    @ai.command(name="persona-set", description="AIの口調・キャラクターを設定（サーバー管理権限が必要）")
+    @app_commands.describe(text=f"口調やキャラクターの指示（{MAX_PERSONA_CHARS}文字まで。例: 語尾に「です」を付けず、親しみやすく）")
+    async def persona_set(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, MAX_PERSONA_CHARS]):
+        if not self._can_edit_persona(interaction):
+            await interaction.response.send_message("この操作にはサーバー管理の権限が必要です。", ephemeral=True)
+            return
+        self.state["personas"][str(interaction.guild_id)] = text.strip()
+        self._save_state()
+        await interaction.response.send_message(
+            f"口調を設定しました。\n>>> {text.strip()}", ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
+
+    @ai.command(name="persona-show", description="現在の口調設定を表示")
+    async def persona_show(self, interaction: discord.Interaction):
+        custom = self.state["personas"].get(str(interaction.guild_id))
+        current = custom if custom is not None else PERSONA_PROMPT
+        label = "このサーバーの設定" if custom is not None else "既定"
+        body = f">>> {current}" if current else "（未設定。標準の丁寧な口調です）"
+        await interaction.response.send_message(f"**口調（{label}）**\n{body}", ephemeral=True,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @ai.command(name="persona-reset", description="口調設定を既定に戻す（サーバー管理権限が必要）")
+    async def persona_reset(self, interaction: discord.Interaction):
+        if not self._can_edit_persona(interaction):
+            await interaction.response.send_message("この操作にはサーバー管理の権限が必要です。", ephemeral=True)
+            return
+        self.state["personas"].pop(str(interaction.guild_id), None)
+        self._save_state()
+        await interaction.response.send_message("口調設定を既定に戻しました。", ephemeral=True)
+
+    @ai.command(name="usage", description="Groq無料枠の利用状況を表示")
+    async def usage(self, interaction: discord.Interaction):
+        today = datetime.now(JST).date().isoformat()
+        u = self.state["usage"] if self.state["usage"].get("date") == today else {}
+        req = u.get("requests", 0)
+        pt, ct = u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
+        mine = self._daily.get(interaction.user.id, (today, 0))
+        mine_n = mine[1] if mine[0] == today else 0
+        lines = [
+            f"📊 **Groq無料枠の利用状況**（このBotの集計・JST {today}）",
+            f"モデル: `{self.model}`",
+            f"リクエスト: **{req:,}** / {FREE_RPD:,}（1日）",
+            f"トークン: **{pt + ct:,}** / {FREE_TPD:,}（1日）　内訳: 入力 {pt:,}・出力 {ct:,}",
+        ]
+        if self.last_limits:
+            L = self.last_limits
+            at = L["at"].strftime("%H:%M:%S")
+            lines += [
+                "",
+                f"Groq側の残り（{at}時点の応答ヘッダー）",
+                f"・リクエスト: {L['remaining-requests'] or '?'} / {L['limit-requests'] or '?'}（1日）　リセットまで {L['reset-requests'] or '?'}",
+                f"・トークン: {L['remaining-tokens'] or '?'} / {L['limit-tokens'] or '?'}（1分）　リセットまで {L['reset-tokens'] or '?'}",
+            ]
+        else:
+            lines += ["", "Groq側の残りは、起動後に最初のAI返答があると表示されます。"]
+        lines += [
+            "",
+            f"あなたの今日の利用: {mine_n} / {USER_DAILY_LIMIT or '∞'}回",
+            "※ 集計はこのBotの分のみです。他のアプリの利用分を含む正確な値は Groq の Limits ページで確認できます。",
+        ]
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     # ---------- 受付 ----------
     def _allowed_place(self, message: discord.Message) -> bool:
@@ -181,7 +302,7 @@ class AIReply(commands.Cog):
                     queued = False
                     try:
                         prompt = await self._build_prompt(message, question[:MAX_QUESTION_CHARS])
-                        answer = await self._ask(prompt)
+                        answer = await self._ask(prompt, self._persona_for(message.guild.id))
                     except RateLimited as error:
                         self._blocked_until = time.monotonic() + error.retry_after
                         answer = self._rate_text(error.retry_after)
@@ -272,8 +393,8 @@ class AIReply(commands.Cog):
             return "本日のAI利用枠の上限に達しました。しばらくたってからお試しください。"
         return f"アクセスが集中しています。約{int(seconds) + 1}秒後にもう一度お試しください。"
 
-    async def _ask(self, prompt: str) -> str:
-        system = SYSTEM_PROMPT + (f"\n\n【口調・キャラクター】\n{PERSONA_PROMPT}" if PERSONA_PROMPT else "")
+    async def _ask(self, prompt: str, persona: str = "") -> str:
+        system = SYSTEM_PROMPT + (f"\n\n【口調・キャラクター】\n{persona}" if persona else "")
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -287,6 +408,7 @@ class AIReply(commands.Cog):
         for attempt in range(2):
             try:
                 async with self.session.post(f"{self.base_url}/chat/completions", json=payload, headers=headers) as resp:
+                    self._capture_limits(resp.headers)
                     if resp.status == 429:
                         try:
                             retry = float(resp.headers.get("retry-after", "30"))
@@ -308,6 +430,7 @@ class AIReply(commands.Cog):
             usage = data.get("usage") or {}
             LOGGER.info("Groq usage: prompt=%s completion=%s total=%s", usage.get("prompt_tokens"),
                         usage.get("completion_tokens"), usage.get("total_tokens"))
+            self._record_usage(usage)
             text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
             if not text.strip():
                 raise RuntimeError("Groqの応答が空でした")
