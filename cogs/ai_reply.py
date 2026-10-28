@@ -30,11 +30,11 @@ USER_DAILY_LIMIT = 30                  # 1ユーザーの1日あたりの回数�
 MAX_CONCURRENT = 2                     # 同時にGroqへ送る数
 MAX_WAITING = 3                        # 待ち行列の上限
 
-MAX_QUESTION_CHARS = 500               # 超えたら受け付けず、短くするよう案内
-MAX_CONTEXT_CHARS = 600                # 文脈（直近の会話＋返信先）の合計文字数
-MAX_CONTEXT_LINE_CHARS = 150           # 文脈の1件あたりの文字数
+MAX_QUESTION_CHARS = 200               # 超えた分は切り捨て、先頭からここまでをAIへ送る
+MAX_CONTEXT_CHARS = 700                # 文脈（返信先＋直近の会話）の合計文字数
+MAX_CONTEXT_LINE_CHARS = 100           # 文脈の1件あたりの文字数
 MAX_CONTEXT_MESSAGES = 3               # 直近の会話の件数
-MAX_REPLY_CHAIN = 1                    # 返信先をたどる段数
+MAX_REPLY_CHAIN = 3                    # 返信先をたどる段数
 MAX_OUTPUT_CHARS = 600                 # 回答の最大文字数（超えたら切る）
 
 # 口調・キャラクターはここに追記する（後から指定）。
@@ -156,11 +156,6 @@ class AIReply(commands.Cog):
         if not question.replace("（添付ファイルあり。内容は読めません）", "").strip():
             await self._safe_reply(message, EMPTY_TEXT)
             return
-        if len(question) > MAX_QUESTION_CHARS:
-            await self._safe_reply(
-                message, f"質問が長すぎます（{len(question)}文字）。{MAX_QUESTION_CHARS}文字以内にしてください。"
-            )
-            return
         if not self.api_key:
             await self._safe_reply(message, NO_KEY_TEXT)
             return
@@ -185,7 +180,7 @@ class AIReply(commands.Cog):
                     self._waiting -= 1
                     queued = False
                     try:
-                        prompt = await self._build_prompt(message, question)
+                        prompt = await self._build_prompt(message, question[:MAX_QUESTION_CHARS])
                         answer = await self._ask(prompt)
                     except RateLimited as error:
                         self._blocked_until = time.monotonic() + error.retry_after
@@ -258,7 +253,7 @@ class AIReply(commands.Cog):
                 kept.append(text)
             return list(reversed(kept))
 
-        chain_lines = fit([line(m) for m in chain], MAX_CONTEXT_CHARS // 2)
+        chain_lines = fit([line(m) for m in chain], MAX_CONTEXT_CHARS)  # 返信先を優先
         used = sum(len(x) + 1 for x in chain_lines)
         recent_lines = fit([line(m) for m in recent], MAX_CONTEXT_CHARS - used)
 
