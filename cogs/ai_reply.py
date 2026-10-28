@@ -26,15 +26,16 @@ ALLOWED_GUILD_IDS: set[int] = set()    # 空なら全サーバー
 ALLOWED_CHANNEL_IDS: set[int] = set()  # 空なら全チャンネル（スレッドは親チャンネルIDも照合）
 
 USER_COOLDOWN_SECONDS = 15
-USER_DAILY_LIMIT = 20                  # 1ユーザーの1日あたりの回数（JST）。0なら無制限
+USER_DAILY_LIMIT = 30                  # 1ユーザーの1日あたりの回数（JST）。0なら無制限
 MAX_CONCURRENT = 2                     # 同時にGroqへ送る数
 MAX_WAITING = 3                        # 待ち行列の上限
 
-MAX_QUESTION_CHARS = 1000
-MAX_CONTEXT_CHARS = 1500
-MAX_CONTEXT_MESSAGES = 6               # 直近の会話の件数
-MAX_REPLY_CHAIN = 3                    # 返信チェーンの段数
-MAX_OUTPUT_CHARS = 1800
+MAX_QUESTION_CHARS = 500               # 超えたら受け付けず、短くするよう案内
+MAX_CONTEXT_CHARS = 600                # 文脈（直近の会話＋返信先）の合計文字数
+MAX_CONTEXT_LINE_CHARS = 150           # 文脈の1件あたりの文字数
+MAX_CONTEXT_MESSAGES = 3               # 直近の会話の件数
+MAX_REPLY_CHAIN = 1                    # 返信先をたどる段数
+MAX_OUTPUT_CHARS = 600                 # 回答の最大文字数（超えたら切る）
 
 # 口調・キャラクターはここに追記する（後から指定）。
 PERSONA_PROMPT = ""
@@ -155,6 +156,11 @@ class AIReply(commands.Cog):
         if not question.replace("（添付ファイルあり。内容は読めません）", "").strip():
             await self._safe_reply(message, EMPTY_TEXT)
             return
+        if len(question) > MAX_QUESTION_CHARS:
+            await self._safe_reply(
+                message, f"質問が長すぎます（{len(question)}文字）。{MAX_QUESTION_CHARS}文字以内にしてください。"
+            )
+            return
         if not self.api_key:
             await self._safe_reply(message, NO_KEY_TEXT)
             return
@@ -179,7 +185,7 @@ class AIReply(commands.Cog):
                     self._waiting -= 1
                     queued = False
                     try:
-                        prompt = await self._build_prompt(message, _truncate(question, MAX_QUESTION_CHARS))
+                        prompt = await self._build_prompt(message, question)
                         answer = await self._ask(prompt)
                     except RateLimited as error:
                         self._blocked_until = time.monotonic() + error.retry_after
@@ -240,7 +246,7 @@ class AIReply(commands.Cog):
         recent.reverse()
 
         def line(item: discord.Message) -> str:
-            body = _truncate(self._plain_mentions(item, item.content).replace("\n", " ").strip() or "（添付のみ）", 300)
+            body = _truncate(self._plain_mentions(item, item.content).replace("\n", " ").strip() or "（添付のみ）", MAX_CONTEXT_LINE_CHARS)
             return f"{self._label(item)}: {body}"
 
         def fit(lines: list[str], budget: int) -> list[str]:
@@ -310,7 +316,7 @@ class AIReply(commands.Cog):
             text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
             if not text.strip():
                 raise RuntimeError("Groqの応答が空でした")
-            return text.strip()
+            return _truncate(text.strip(), MAX_OUTPUT_CHARS)
         raise last_error or RuntimeError("Groqに接続できませんでした")
 
     # ---------- 送信 ----------
