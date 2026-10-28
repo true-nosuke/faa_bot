@@ -7,7 +7,11 @@ from discord.ext import commands
 
 BASE_DIR = Path(__file__).parent
 GUILD_IDS = [1405430304767873085, 1428304833307475990, 1502415792036249734]
-EXTENSIONS = ["cogs.general", "cogs.tasks", "cogs.affinity", "cogs.typst_render", "cogs.m45", "cogs.operations", "cogs.manual_reply", "cogs.special_days"]
+# メンション返答の方式。"ai": Groq AIが返答 / "manual": 原稿チャンネル式（cogs/manual_reply.py）
+# manual を使う場合は cogs/manual_reply.py 先頭の設定（MANUAL_REPLY_ENABLED・各ID）も変更する。
+REPLY_MODE = "ai"
+REPLY_EXTENSION = "cogs.manual_reply" if REPLY_MODE == "manual" else "cogs.ai_reply"
+EXTENSIONS = ["cogs.general", "cogs.tasks", "cogs.affinity", "cogs.typst_render", "cogs.m45", "cogs.operations", REPLY_EXTENSION, "cogs.special_days"]
 
 logging.basicConfig(level=logging.INFO)
 
