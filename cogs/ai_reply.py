@@ -35,7 +35,7 @@ SEARCH_ENABLED = True
 SEARCH_DAILY_LIMIT = 30                # 全体の1日あたりの検索回数（JST）。超えたら検索なしで答える
 SEARCH_USER_DAILY_LIMIT = 5            # 1ユーザーの1日あたりの検索回数
 
-USER_COOLDOWN_SECONDS = 15
+USER_COOLDOWN_SECONDS = 0   # 連続利用の間隔制限（0で無制限）
 USER_DAILY_LIMIT = 30                  # 1ユーザーの1日あたりの回数（JST）。0なら無制限
 MAX_CONCURRENT = 2                     # 同時にGroqへ送る数
 MAX_WAITING = 3                        # 待ち行列の上限
@@ -304,7 +304,7 @@ class AIReply(commands.Cog):
     def _check_user_limits(self, user_id: int) -> str | None:
         now = time.monotonic()
         last = self._last_used.get(user_id)
-        if last is not None and now - last < USER_COOLDOWN_SECONDS:
+        if USER_COOLDOWN_SECONDS and last is not None and now - last < USER_COOLDOWN_SECONDS:
             wait = int(USER_COOLDOWN_SECONDS - (now - last)) + 1
             return f"連続での利用は少し間をあけてください。あと約{wait}秒お待ちください。"
         if USER_DAILY_LIMIT:
