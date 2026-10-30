@@ -17,6 +17,7 @@ bot.db
 ai_state.json
 deploy_state.json
 manual_dm_state.json
+manual_dm_persons.json
 
 *.part
 .pytest_cache/
