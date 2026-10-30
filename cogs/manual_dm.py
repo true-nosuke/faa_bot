@@ -25,8 +25,8 @@ MANUAL_PERSONS: dict[str, dict] = {
 }
 WAIT_TIMEOUT_SECONDS = 600       # 回答が届かないときの締切
 MAX_PENDING_PER_TARGET = 3       # 同じ人への同時依頼の上限
-ASKER_COOLDOWN_SECONDS = 30      # 質問者1人あたりの間隔
-ASKER_HOURLY_LIMIT = 5           # 質問者1人あたり1時間の回数
+ASKER_COOLDOWN_SECONDS = 0       # 質問者1人あたりの間隔（秒）。0で無制限
+ASKER_HOURLY_LIMIT = 0           # 質問者1人あたり1時間の回数。0で無制限
 MAX_QUESTION_CHARS = 1500        # DMに載せる質問の最大文字数
 MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024
 STATE_FILE = Path(__file__).parent.parent / "manual_dm_state.json"
@@ -370,9 +370,9 @@ class ManualDM(commands.Cog):
         now = time.monotonic()
         hist = [t for t in self._asks.get(user_id, []) if now - t < 3600]
         self._asks[user_id] = hist
-        if hist and now - hist[-1] < ASKER_COOLDOWN_SECONDS:
+        if ASKER_COOLDOWN_SECONDS and hist and now - hist[-1] < ASKER_COOLDOWN_SECONDS:
             return RATE_TEXT
-        if len(hist) >= ASKER_HOURLY_LIMIT:
+        if ASKER_HOURLY_LIMIT and len(hist) >= ASKER_HOURLY_LIMIT:
             return RATE_TEXT
         return None
 
