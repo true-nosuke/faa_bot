@@ -15,6 +15,7 @@ bot.db
 *.sqlite
 *.sqlite3
 ai_state.json
+deploy_state.json
 
 *.part
 .pytest_cache/
