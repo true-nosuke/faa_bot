@@ -330,6 +330,9 @@ class AIReply(commands.Cog):
             return
         if not any(user.id == self.bot.user.id for user in message.mentions):
             return
+        manual = self.bot.get_cog("ManualDM")
+        if manual is not None and manual.claims(message):
+            return   # 「◯◯で回答して」の指名手動返答は ManualDM が処理する
         if not self._allowed_place(message):
             return
 

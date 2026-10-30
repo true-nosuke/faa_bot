@@ -130,6 +130,9 @@ class ManualReply(commands.Cog):
         mentioned = any(user.id == self.bot.user.id for user in message.mentions)
         if not mentioned:
             return
+        manual = self.bot.get_cog("ManualDM")
+        if manual is not None and manual.claims(message):
+            return   # 「◯◯で回答して」の指名手動返答は ManualDM が処理する
         if self._pending is not None:
             await self._safe_reply(message, BUSY_TEXT)
             return
