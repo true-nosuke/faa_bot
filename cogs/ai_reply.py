@@ -356,6 +356,7 @@ class AIReply(commands.Cog):
 
         self._count_use(message.author.id)
         answer = ERROR_TEXT
+        handled = False
         self._waiting += 1
         queued = True
         try:
@@ -364,8 +365,12 @@ class AIReply(commands.Cog):
                     self._waiting -= 1
                     queued = False
                     try:
-                        prompt = await self._build_prompt(message, question[:MAX_QUESTION_CHARS])
-                        answer = await self._ask(prompt, self._persona_for(message.guild.id), message.author.id)
+                        ops = self.bot.get_cog("ChatOps")   # タスク・好感度などの操作依頼ならここで実行する
+                        if ops is not None and await ops.try_handle(message, self):
+                            handled = True
+                        else:
+                            prompt = await self._build_prompt(message, question[:MAX_QUESTION_CHARS])
+                            answer = await self._ask(prompt, self._persona_for(message.guild.id), message.author.id)
                     except RateLimited as error:
                         self._blocked_until = time.monotonic() + error.retry_after
                         answer = self._rate_text(error.retry_after)
@@ -374,6 +379,8 @@ class AIReply(commands.Cog):
         finally:
             if queued:
                 self._waiting -= 1
+        if handled:
+            return
         await self._send(message, answer)
 
     # ---------- 文脈 ----------
@@ -470,6 +477,14 @@ class AIReply(commands.Cog):
                 payload["tools"] = [{"type": "browser_search"}]
                 payload["tool_choice"] = "auto"
                 payload["max_completion_tokens"] = SEARCH_COMPLETION_TOKENS
+        data = await self._groq(payload, user_id)
+        text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        if not text.strip():
+            raise RuntimeError("Groqの応答が空でした")
+        return _truncate_text(text.strip(), MAX_OUTPUT_CHARS)
+
+    async def _groq(self, payload: dict, user_id: int = 0, *, tool_fallback: bool = True) -> dict:
+        """Groqへ送信して応答(dict)を返す。再試行・429・使用量の記録をここで一括して行う。"""
         headers = {"Authorization": f"Bearer {self.api_key}"}
         last_error: Exception | None = None
         failures = 0  # 5xx・通信エラーの回数（2回で諦める）。検索なしへの切替は別枠
@@ -483,7 +498,7 @@ class AIReply(commands.Cog):
                         except ValueError:
                             retry = 30.0
                         raise RateLimited(retry)
-                    if resp.status in (400, 413) and "tools" in payload:
+                    if tool_fallback and resp.status in (400, 413) and "tools" in payload:
                         # 検索でトークン超過・ツールエラーになった場合は、検索なしで答え直す
                         LOGGER.warning("検索付きの呼び出しが失敗(HTTP %s)。検索なしで再試行します", resp.status)
                         for key in ("tools", "tool_choice"):
@@ -514,10 +529,7 @@ class AIReply(commands.Cog):
             self._record_usage(usage)
             if (((data.get("choices") or [{}])[0].get("message") or {}).get("executed_tools")):
                 self._count_search(user_id)
-            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-            if not text.strip():
-                raise RuntimeError("Groqの応答が空でした")
-            return _truncate_text(text.strip(), MAX_OUTPUT_CHARS)
+            return data
         raise last_error or RuntimeError("Groqに接続できませんでした")
 
     # ---------- 送信 ----------
