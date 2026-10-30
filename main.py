@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 
 BASE_DIR = Path(__file__).parent
-GUILD_IDS = [1405430304767873085, 1428304833307475990, 1502415792036249734]
+GUILD_IDS = [1405430304767873085, 1428304833307475990, 1502415792036249734, 1526887667252334652]
 # メンション返答の方式。"ai": Groq AIが返答 / "manual": 原稿チャンネル式（cogs/manual_reply.py）
 # manual を使う場合は cogs/manual_reply.py 先頭の設定（MANUAL_REPLY_ENABLED・各ID）も変更する。
 REPLY_MODE = "ai"
