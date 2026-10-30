@@ -6,27 +6,33 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 LOGGER = logging.getLogger(__name__)
 
 # ---- 設定（変更後は /deploy update か再起動）----
 MANUAL_DM_ENABLED = True
-# 「名前」→ 本人のユーザーID。別名（aliases）は任意。user_id が 0 の人は無効。
+# 初回起動時の初期値。以降は /manual-dm コマンドで追加・変更し、manual_dm_persons.json に保存される
+# （このファイルがあると、ここの値は使われない）。user_id が 0 の人は無効。
 MANUAL_PERSONS: dict[str, dict] = {
     "nosukeGPT": {"user_id": 0, "aliases": []},
 }
 WAIT_TIMEOUT_SECONDS = 600       # 回答が届かないときの締切
 MAX_PENDING_PER_TARGET = 3       # 同じ人への同時依頼の上限
-ASKER_COOLDOWN_SECONDS = 30      # 質問者1人あたりの間隔
-ASKER_HOURLY_LIMIT = 5           # 質問者1人あたり1時間の回数
+ASKER_COOLDOWN_SECONDS = 0       # 質問者1人あたりの間隔（秒）。0で無制限
+ASKER_HOURLY_LIMIT = 0           # 質問者1人あたり1時間の回数。0で無制限
 MAX_QUESTION_CHARS = 1500        # DMに載せる質問の最大文字数
 MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024
 STATE_FILE = Path(__file__).parent.parent / "manual_dm_state.json"
+PERSONS_FILE = Path(__file__).parent.parent / "manual_dm_persons.json"
+MAX_ALIASES = 5
+MAX_NAME_CHARS = 32
 
 # 質問者から見える文面（AIが答えているように見せるため、人の存在は出さない）
 UNAVAILABLE_TEXT = "⚠️ {name} は現在回答できません。しばらくしてからもう一度お試しください。"
@@ -39,6 +45,14 @@ EMPTY_TEXT = "⚠️ 質問を入力してください。"
 _KEYWORD = r"(?:回答|返答|答え|応答|返事|聞い|訊い|質問|お願い|おねがい|頼)"
 _SUFFIX = r"(?:(?:し)?て(?:ください|下さい|くれ|ほしい|欲しい|ね|よ)?|ください|下さい|(?:お願い|おねがい)(?:します|ね)?|します|いたします|ね|よ)?"
 _TAIL = r"[。、，,.!！?？ー〜~\s]*"
+
+
+def _norm(text: str) -> str:
+    """名前の比較用。全角半角・大文字小文字を区別しない。"""
+    return unicodedata.normalize("NFKC", text).casefold().strip()
+
+
+_NAME_OK = re.compile(r"^[^\s<>@#:,、，]+$")
 
 
 def _fuzzy(text: str) -> str:
@@ -100,26 +114,172 @@ class ManualDM(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.persons: dict[str, tuple[str, int]] = {}   # 正規化名 → (表示名, user_id)
-        names = []
-        for name, info in MANUAL_PERSONS.items():
-            uid = int(info.get("user_id") or 0)
-            if uid <= 0:
-                continue
-            for n in [name, *info.get("aliases", [])]:
-                names.append(n)
-                self.persons[n.casefold()] = (name, uid)
-        self._pattern = build_pattern(names) if names else None
+        config = getattr(bot, "config", {}) or {}
+        self.admin_ids = {int(x) for x in (config.get("DEPLOY_ADMIN_IDS") or "").replace(" ", "").split(",") if x.isdigit()}
+        self.data: dict[str, dict] = self._load_persons()      # 表示名 → {"user_id": int, "aliases": [str]}
+        self.persons: dict[str, tuple[str, int]] = {}          # 正規化した名前 → (表示名, user_id)
+        self._pattern = None
+        self._rebuild()
         self._reqs: dict[int, Request] = {}      # 質問メッセージID → 依頼
         self._by_dm: dict[int, int] = {}         # DM通知のメッセージID → 質問メッセージID
         self._asks: dict[int, list[float]] = {}
         self._closing = False
 
+    # ---------- 名前とユーザーの登録 ----------
+    def _load_persons(self) -> dict[str, dict]:
+        try:
+            raw = json.loads(PERSONS_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                return {str(k): {"user_id": int(v.get("user_id") or 0), "aliases": [str(a) for a in v.get("aliases", [])]}
+                        for k, v in raw.items()}
+        except (OSError, ValueError, AttributeError):
+            pass
+        return {k: {"user_id": int(v.get("user_id") or 0), "aliases": list(v.get("aliases", []))}
+                for k, v in MANUAL_PERSONS.items() if int(v.get("user_id") or 0) > 0}
+
+    def _save_persons(self):
+        tmp = PERSONS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(PERSONS_FILE)
+
+    def _rebuild(self):
+        self.persons = {}
+        names = []
+        for name, info in self.data.items():
+            if int(info.get("user_id") or 0) <= 0:
+                continue
+            for n in [name, *info.get("aliases", [])]:
+                names.append(n)
+                self.persons[_norm(n)] = (name, int(info["user_id"]))
+        self._pattern = build_pattern(names) if names else None
+
+    def _find(self, name: str) -> str | None:
+        key = _norm(name)
+        return next((k for k in self.data if _norm(k) == key), None)
+
+    def _check_names(self, names: list[str], own: str | None = None) -> str | None:
+        """名前・別名として使えるか確認する。使えなければ理由を返す。own は自分自身（編集中の人）。"""
+        seen = set()
+        for n in names:
+            if not n or len(n) > MAX_NAME_CHARS or not _NAME_OK.match(n):
+                return f"「{n}」は使えません。空白や `< > @ # : ,` を含まない{MAX_NAME_CHARS}文字以内にしてください。"
+            key = _norm(n)
+            if key in seen:
+                return f"「{n}」が重複しています。"
+            seen.add(key)
+            owner = self.persons.get(key)
+            if owner and owner[0] != own:
+                return f"「{n}」は {owner[0]} で使われています。"
+        return None
+
+    @staticmethod
+    def _split_aliases(text: str | None) -> list[str]:
+        if not text or text.strip() in ("-", "なし", "ー"):
+            return []
+        return [a.strip() for a in re.split(r"[,、，\n]", text) if a.strip()]
+
+    async def _is_admin(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id in self.admin_ids or await self.bot.is_owner(interaction.user)
+
+    async def _deny(self, interaction: discord.Interaction) -> bool:
+        if await self._is_admin(interaction):
+            return False
+        await interaction.response.send_message("この操作はBotの所有者だけが実行できます。", ephemeral=True)
+        return True
+
+    def _line(self, name: str, info: dict) -> str:
+        alias = "　別名：" + "、".join(info["aliases"]) if info["aliases"] else ""
+        return f"・**{discord.utils.escape_markdown(name)}** → <@{info['user_id']}>{alias}"
+
+    manual = app_commands.Group(name="manual-dm", description="指名手動返答の名前とユーザーの管理（所有者のみ）", guild_only=True)
+
+    async def _name_autocomplete(self, interaction: discord.Interaction, current: str):
+        if not await self._is_admin(interaction):
+            return []     # 一覧を見られるのは管理者だけ
+        key = _norm(current)
+        return [app_commands.Choice(name=n[:100], value=n[:100]) for n in self.data if key in _norm(n)][:25]
+
+    @manual.command(name="list", description="登録されている名前とユーザーを表示")
+    async def manual_list(self, interaction: discord.Interaction):
+        if await self._deny(interaction):
+            return
+        if not self.data:
+            return await interaction.response.send_message("登録はありません。`/manual-dm add` で追加できます。", ephemeral=True)
+        await interaction.response.send_message(
+            "📝 **指名手動返答の登録**\n" + "\n".join(self._line(n, i) for n, i in self.data.items())[:1800],
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @manual.command(name="add", description="名前とユーザーを追加する")
+    @app_commands.describe(name="呼び名（例: nosukeGPT）", user="回答するユーザー",
+                           aliases="別名（任意・「、」か「,」区切りで最大5つ）")
+    async def manual_add(self, interaction: discord.Interaction, name: str, user: discord.User, aliases: str | None = None):
+        if await self._deny(interaction):
+            return
+        name = name.strip()
+        alias_list = self._split_aliases(aliases)
+        if user.bot:
+            return await interaction.response.send_message("Botは指定できません。", ephemeral=True)
+        if self._find(name):
+            return await interaction.response.send_message(f"「{name}」はすでに登録されています。変更は `/manual-dm edit` を使ってください。", ephemeral=True)
+        if len(alias_list) > MAX_ALIASES:
+            return await interaction.response.send_message(f"別名は最大{MAX_ALIASES}つまでです。", ephemeral=True)
+        if problem := self._check_names([name, *alias_list]):
+            return await interaction.response.send_message("⚠️ " + problem, ephemeral=True)
+        self.data[name] = {"user_id": user.id, "aliases": alias_list}
+        self._save_persons(); self._rebuild()
+        await interaction.response.send_message("✅ 追加しました。\n" + self._line(name, self.data[name]),
+                                                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @manual.command(name="edit", description="名前・ユーザー・別名を変更する（指定した項目だけ変わります）")
+    @app_commands.describe(name="変更する登録の名前", new_name="新しい呼び名", user="新しい回答ユーザー",
+                           aliases="別名を丸ごと置き換える（「、」区切り。空にするには「なし」）")
+    @app_commands.autocomplete(name=_name_autocomplete)
+    async def manual_edit(self, interaction: discord.Interaction, name: str, new_name: str | None = None,
+                          user: discord.User | None = None, aliases: str | None = None):
+        if await self._deny(interaction):
+            return
+        current = self._find(name)
+        if current is None:
+            return await interaction.response.send_message(f"「{name}」は登録されていません。", ephemeral=True)
+        if new_name is None and user is None and aliases is None:
+            return await interaction.response.send_message("変更する項目（new_name / user / aliases）を指定してください。", ephemeral=True)
+        info = {"user_id": self.data[current]["user_id"], "aliases": list(self.data[current]["aliases"])}
+        final_name = new_name.strip() if new_name else current
+        if user is not None:
+            if user.bot:
+                return await interaction.response.send_message("Botは指定できません。", ephemeral=True)
+            info["user_id"] = user.id
+        if aliases is not None:
+            info["aliases"] = self._split_aliases(aliases)
+            if len(info["aliases"]) > MAX_ALIASES:
+                return await interaction.response.send_message(f"別名は最大{MAX_ALIASES}つまでです。", ephemeral=True)
+        if problem := self._check_names([final_name, *info["aliases"]], own=current):
+            return await interaction.response.send_message("⚠️ " + problem, ephemeral=True)
+        del self.data[current]
+        self.data[final_name] = info
+        self._save_persons(); self._rebuild()
+        await interaction.response.send_message("✅ 変更しました。\n" + self._line(final_name, info),
+                                                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @manual.command(name="remove", description="登録を削除する")
+    @app_commands.describe(name="削除する登録の名前")
+    @app_commands.autocomplete(name=_name_autocomplete)
+    async def manual_remove(self, interaction: discord.Interaction, name: str):
+        if await self._deny(interaction):
+            return
+        current = self._find(name)
+        if current is None:
+            return await interaction.response.send_message(f"「{name}」は登録されていません。", ephemeral=True)
+        info = self.data.pop(current)
+        self._save_persons(); self._rebuild()
+        waiting = sum(1 for r in self._reqs.values() if r.target_id == info["user_id"])
+        note = f"\n待機中の依頼が{waiting}件あります。それらは、そのまま回答を受け付けます。" if waiting else ""
+        await interaction.response.send_message(f"🗑️ 「{current}」を削除しました。{note}", ephemeral=True)
+
     # ---------- 起動・終了 ----------
     async def cog_load(self):
         self.bot.add_dynamic_items(DeclineButton)
-        if self.persons:
-            asyncio.create_task(self._restore())
+        asyncio.create_task(self._restore())
 
     async def cog_unload(self):
         self._closing = True
@@ -173,8 +333,7 @@ class ManualDM(commands.Cog):
         return name, uid, rest
 
     def _lookup(self, raw: str):
-        key = "".join(chr(ord(c) - 0xFEE0) if 0xFF01 <= ord(c) <= 0xFF5E else c for c in raw).casefold()
-        return self.persons.get(key, (None, None))
+        return self.persons.get(_norm(raw), (None, None))
 
     def claims(self, message: discord.Message) -> bool:
         return self.parse(message) is not None
@@ -211,9 +370,9 @@ class ManualDM(commands.Cog):
         now = time.monotonic()
         hist = [t for t in self._asks.get(user_id, []) if now - t < 3600]
         self._asks[user_id] = hist
-        if hist and now - hist[-1] < ASKER_COOLDOWN_SECONDS:
+        if ASKER_COOLDOWN_SECONDS and hist and now - hist[-1] < ASKER_COOLDOWN_SECONDS:
             return RATE_TEXT
-        if len(hist) >= ASKER_HOURLY_LIMIT:
+        if ASKER_HOURLY_LIMIT and len(hist) >= ASKER_HOURLY_LIMIT:
             return RATE_TEXT
         return None
 
