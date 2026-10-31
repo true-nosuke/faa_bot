@@ -20,7 +20,6 @@ LOGGER = logging.getLogger(__name__)
 WORKER = Path(__file__).parent.parent / "renderer_worker.py"
 
 TRIGGER_EMOJI = "<:typst:1558680485427679422>"
-FAMICHIKI_EMOJI = "<a:famichiki:1558708828831223878>"
 RENDER_TIMEOUT = 30  # 秒（パッケージの初回ダウンロードを含む）
 MAX_CODE_CHARS = 4000
 MAX_MATH_SPANS = 10
@@ -191,28 +190,6 @@ class TypstRender(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.guild is None:
-            return
-        if message.content.strip() == "ファミチキ" and message.reference is not None:
-            perms = message.channel.permissions_for(message.guild.me)
-            if not perms.add_reactions:
-                LOGGER.warning("#%s で「リアクションの追加」権限がありません。", message.channel)
-                return
-            if not perms.manage_messages:
-                LOGGER.warning("#%s で「メッセージの管理」権限がありません。", message.channel)
-                return
-            if message.reference.message_id is None:
-                LOGGER.warning("ファミチキ返信の返信先メッセージIDを取得できませんでした。")
-                return
-            try:
-                target = await message.channel.fetch_message(message.reference.message_id)
-                await target.add_reaction(FAMICHIKI_EMOJI)
-                await message.delete()
-            except discord.NotFound:
-                LOGGER.warning("ファミチキ返信または返信先メッセージが見つかりません。")
-            except discord.Forbidden:
-                LOGGER.warning("ファミチキ処理に必要なDiscord権限がありません。")
-            except discord.HTTPException:
-                LOGGER.exception("ファミチキのリアクション処理に失敗しました。")
             return
         self.seen += 1
         self.seen_with_content += bool(message.content)
