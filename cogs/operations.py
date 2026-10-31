@@ -31,6 +31,17 @@ def integer_setting(config, key, default, low, high):
         return default
 
 
+HEARTBEAT_HOSTS = {"hc-ping.com", "heartbeat.uptimerobot.com"}
+
+
+def validate_heartbeat_url(url: str):
+    """秘密のURLを誤って別の宛先に送らないよう、許可したサービスのHTTPS URLだけを受け付ける。"""
+    parsed = urlparse(url)
+    if (parsed.scheme != "https" or parsed.hostname not in HEARTBEAT_HOSTS or parsed.username or parsed.password
+            or parsed.port not in (None, 443)):
+        raise ValueError("HEARTBEAT_URLは、Healthchecks.io（hc-ping.com）かUptimeRobotのHTTPSハートビートURLを設定してください")
+
+
 def create_backup(config: dict) -> Path | None:
     """SQLiteのオンラインバックアップで整合したDBを保存。秘密の.envは含めない。"""
     if not DB_PATH.exists():
@@ -84,11 +95,10 @@ class Operations(commands.Cog):
         self.config = getattr(bot, "config", {})
         self.runner = None
         self.session = None
-        self.heartbeat_url = self.config.get("UPTIMEROBOT_HEARTBEAT_URL", "").strip()
+        # HEARTBEAT_URL（Healthchecks.io / UptimeRobot）。旧設定名 UPTIMEROBOT_HEARTBEAT_URL も使える。
+        self.heartbeat_url = (self.config.get("HEARTBEAT_URL") or self.config.get("UPTIMEROBOT_HEARTBEAT_URL") or "").strip()
         if self.heartbeat_url:
-            parsed = urlparse(self.heartbeat_url)
-            if parsed.scheme != "https" or parsed.hostname != "heartbeat.uptimerobot.com" or parsed.username or parsed.password or parsed.port not in (None,443):
-                raise ValueError("UPTIMEROBOT_HEARTBEAT_URLはUptimeRobotのHTTPSハートビートURLを設定してください")
+            validate_heartbeat_url(self.heartbeat_url)
 
     async def cog_load(self):
         interval = integer_setting(self.config, "BACKUP_INTERVAL_HOURS", 6, 1, 168)
@@ -148,10 +158,10 @@ class Operations(commands.Cog):
         try:
             async with self.session.get(self.heartbeat_url, allow_redirects=False) as response:
                 if response.status >= 400:
-                    LOGGER.warning("UptimeRobotへのハートビート送信に失敗: HTTP %s",response.status)
+                    LOGGER.warning("ハートビートの送信に失敗: HTTP %s",response.status)
         except (aiohttp.ClientError, asyncio.TimeoutError):
             # 例外メッセージに秘密のURLが含まれる可能性があるので出力しない。
-            LOGGER.warning("UptimeRobotへのハートビート送信に失敗しました")
+            LOGGER.warning("ハートビートの送信に失敗しました")
 
     @heartbeat_loop.before_loop
     async def before_heartbeat(self):
