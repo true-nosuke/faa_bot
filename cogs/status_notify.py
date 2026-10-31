@@ -16,7 +16,7 @@ from discord.ext import commands, tasks
 LOGGER = logging.getLogger(__name__)
 
 # ---- 設定（.env の STATUS_CHANNEL_ID でも上書き可。0 で通知なし）----
-NOTIFY_CHANNEL_ID = 1558696085831286814
+NOTIFY_CHANNEL_ID = 1559499654150750269
 STATE_FILE = Path(__file__).parent.parent / "status_state.json"
 DISCONNECT_REPORT_SECONDS = 60       # これ以上の接続断だけ知らせる
 ERROR_DEDUP_SECONDS = 600            # 同じ種類のエラーは、この間隔で1回だけ知らせる
