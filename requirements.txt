@@ -1,4 +1,5 @@
-discord.py>=2.4
+discord.py>=2.5
 typst==0.15.0
 tzdata
 pymupdf
+pillow

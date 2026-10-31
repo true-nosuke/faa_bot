@@ -71,7 +71,7 @@ def create_backup(config: dict) -> Path | None:
                 dest.close(); source.close()
             manifest = {"created_at": datetime.now(timezone.utc).isoformat(), "files": {}}
             with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as archive:
-                for path in (snapshot, BASE_DIR / "messages.json"):
+                for path in (snapshot, BASE_DIR / "messages.json", BASE_DIR / "emoji_map.json"):
                     if path.exists():
                         raw = path.read_bytes()
                         archive.writestr(path.name, raw)
