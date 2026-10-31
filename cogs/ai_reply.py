@@ -41,9 +41,9 @@ MAX_CONCURRENT = 2                     # 同時にGroqへ送る数
 MAX_WAITING = 3                        # 待ち行列の上限
 
 MAX_QUESTION_CHARS = 200               # 超えた分は切り捨て、先頭からここまでをAIへ送る
-MAX_CONTEXT_CHARS = 700                # 文脈（返信先＋直近の会話）の合計文字数
-MAX_CONTEXT_LINE_CHARS = 100           # 文脈の1件あたりの文字数
-MAX_CONTEXT_MESSAGES = 3               # 直近の会話の件数
+MAX_CONTEXT_CHARS = 400                # 文脈（返信先＋直近の会話）の合計文字数
+MAX_CONTEXT_LINE_CHARS = 80            # 文脈の1件あたりの文字数
+MAX_CONTEXT_MESSAGES = 2               # 直近の会話の件数
 MAX_REPLY_CHAIN = 3                    # 返信先をたどる段数
 MAX_OUTPUT_CHARS = 300                 # 回答の最大文字数（超えたら文の区切りで切る）
 
@@ -67,10 +67,11 @@ EMOJI_GUIDE = {
     "iyadesu": "技術的には可能です(気が進まない・遠回しな拒否)",
 }
 MAX_EMOJI = 2
+EMOJI_ENABLED = False                  # Trueでガイドをプロンプトに載せ、回答中の :名前: をサーバー絵文字へ変換する（入力トークンが約190増える）
 
 STATE_FILE = Path(__file__).parent.parent / "ai_state.json"   # .env の AI_STATE_PATH でも変更可
 
-_EMOJI_PROMPT = (
+_EMOJI_PROMPT = "" if not EMOJI_ENABLED else (
     f"- 場面に合うときだけ、文中に絵文字を0〜{MAX_EMOJI}個入れてよい(:名前: の書式。毎回は使わず、同じものを繰り返さない)。"
     + " ".join(f":{name}:={meaning}" for name, meaning in EMOJI_GUIDE.items())
     + "\n"
@@ -542,6 +543,8 @@ class AIReply(commands.Cog):
 
     def _apply_emoji(self, text: str, guild: discord.Guild | None) -> str:
         """:名前: をサーバー絵文字に変換する。上限超過・存在しない絵文字は取り除く。"""
+        if not EMOJI_ENABLED:
+            return text
         kept = 0
 
         def sub(match: re.Match) -> str:
