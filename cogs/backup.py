@@ -52,7 +52,7 @@ class Backup(commands.Cog):
             try:
                 await interaction.followup.send(
                     f"💾 バックアップを作成しました（{mb:.2f}MB）。\n"
-                    "含まれるもの：`bot.db`（タスク・好感度など）と `messages.json`。\n"
+                    "含まれるもの：`bot.db`（タスク・好感度など）・`messages.json`・`emoji_map.json`（絵文字キーワード）。\n"
                     "-# このメッセージとファイルは、あなたにだけ表示されています。個人情報を含むため、公開の場所には置かないでください。",
                     file=discord.File(path, filename=path.name), ephemeral=True)
             except discord.HTTPException as error:

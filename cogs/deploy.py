@@ -27,7 +27,7 @@ GIT_TIMEOUT = 60
 PIP_TIMEOUT = 300
 
 # 更新・上書きしないもの（zip方式のとき）。gitの場合は .gitignore が守る。
-PROTECTED_NAMES = {"ai_state.json", "deploy_state.json", "manual_dm_state.json", "manual_dm_persons.json", "status_state.json"}
+PROTECTED_NAMES = {"ai_state.json", "deploy_state.json", "manual_dm_state.json", "manual_dm_persons.json", "status_state.json", "emoji_map.json"}
 PROTECTED_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".part"}
 PROTECTED_TOP_DIRS = {".git", ".venv", "backups", "m45_cache", "out", "tests", "__pycache__"}
 
