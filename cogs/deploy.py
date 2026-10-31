@@ -27,7 +27,7 @@ GIT_TIMEOUT = 60
 PIP_TIMEOUT = 300
 
 # 更新・上書きしないもの（zip方式のとき）。gitの場合は .gitignore が守る。
-PROTECTED_NAMES = {"ai_state.json", "deploy_state.json", "manual_dm_state.json", "manual_dm_persons.json"}
+PROTECTED_NAMES = {"ai_state.json", "deploy_state.json", "manual_dm_state.json", "manual_dm_persons.json", "status_state.json"}
 PROTECTED_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".part"}
 PROTECTED_TOP_DIRS = {".git", ".venv", "backups", "m45_cache", "out", "tests", "__pycache__"}
 
@@ -219,8 +219,11 @@ class Deploy(commands.Cog):
         return {"changed": True, "sha": sha[:7], "old": old[:7] or "不明", "files": changed, "log": f"{sha[:7]} {subject}"}
 
     # ---------- 再起動 ----------
-    async def _restart_process(self):
+    async def _restart_process(self, reason: str = "restart"):
         await asyncio.sleep(1.0)
+        notifier = self.bot.get_cog("StatusNotify")
+        if notifier is not None:
+            notifier.pending_exit = reason   # 停止通知を「再起動」「更新」の文面にする
         await self.bot.close()
         logging.shutdown()
         try:
@@ -258,7 +261,7 @@ class Deploy(commands.Cog):
                     "🔄 Botを再起動します。数十秒お待ちください。")
             await interaction.followup.send(text, ephemeral=True)
             LOGGER.info("deploy: %s → %s、再起動します", result["old"], result["sha"])
-            asyncio.create_task(self._restart_process())
+            asyncio.create_task(self._restart_process("update"))
 
     @deploy.command(name="restart", description="Botを再起動する（コードは更新しない）")
     async def restart(self, interaction: discord.Interaction):
