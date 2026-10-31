@@ -18,6 +18,7 @@ ai_state.json
 deploy_state.json
 manual_dm_state.json
 manual_dm_persons.json
+status_state.json
 
 *.part
 .pytest_cache/

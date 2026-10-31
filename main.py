@@ -11,7 +11,7 @@ GUILD_IDS = [1405430304767873085, 1428304833307475990, 1502415792036249734, 1526
 # manual を使う場合は cogs/manual_reply.py 先頭の設定（MANUAL_REPLY_ENABLED・各ID）も変更する。
 REPLY_MODE = "ai"
 REPLY_EXTENSION = "cogs.manual_reply" if REPLY_MODE == "manual" else "cogs.ai_reply"
-EXTENSIONS = ["cogs.general", "cogs.tasks", "cogs.affinity", "cogs.typst_render", "cogs.m45", "cogs.operations", REPLY_EXTENSION, "cogs.special_days", "cogs.deploy", "cogs.chat_ops", "cogs.manual_dm"]
+EXTENSIONS = ["cogs.general", "cogs.tasks", "cogs.affinity", "cogs.typst_render", "cogs.m45", "cogs.operations", REPLY_EXTENSION, "cogs.special_days", "cogs.deploy", "cogs.chat_ops", "cogs.manual_dm", "cogs.backup", "cogs.status_notify"]
 
 logging.basicConfig(level=logging.INFO)
 
