@@ -446,7 +446,7 @@ class Affinity(commands.Cog):
         await ctx.send(text, allowed_mentions=discord.AllowedMentions.none())
 
     # ---------- 公開プロフィール ----------
-    def _profile_text(self, member: discord.Member, *, include_history: bool, show_reason: bool = True) -> str:
+    def _profile_text(self, member: discord.Member, *, include_history: bool) -> str:
         uid = member.id
         now = datetime.now(JST)
         row = self.db.execute("SELECT points FROM affinity WHERE user_id=?", (uid,)).fetchone()
@@ -460,7 +460,8 @@ class Affinity(commands.Cog):
             f"**順位**：{higher + 1}位 / {total}人（全サーバーの記録済みユーザー）",
             f"**今日の増加**：{gained:+d} / +{DAILY_GAIN_LIMIT}（回答・チャット分）",
         ]
-        # 他人を照会する /user でも履歴は表示するが、管理者調整の理由は本人にだけ見せる。
+        # /my・/user のどちらでも直近の増減を表示する。管理者による調整は、理由だけを項目名として表示し、
+        # 管理者が調整したことが分かる文言は載せない。
         if include_history:
             logs = self.db.execute(
                 "SELECT delta, reason, note, created_at FROM affinity_log WHERE user_id=? ORDER BY id DESC LIMIT 5",
@@ -470,15 +471,17 @@ class Affinity(commands.Cog):
                 lines.extend(["", "**直近の増減**"])
             for g in logs:
                 at = datetime.fromisoformat(g["created_at"])
-                lines.append(f"`{g['delta']:+d}` {LABELS.get(g['reason'], g['reason'])}　{at:%m/%d %H:%M}")
-                if g["reason"] == "admin" and g["note"] and show_reason:
+                label = LABELS.get(g["reason"], g["reason"])
+                if g["reason"] == "admin":
+                    label = "調整"
                     try:
-                        note = json.loads(g["note"])
-                        reason = str(note.get("reason", "理由未指定"))
+                        reason = str(json.loads(g["note"]).get("reason", "")).strip()
                     except (ValueError, AttributeError, TypeError):
-                        reason = str(g["note"])
-                    short = reason[:100].replace("\n", " ").replace("\r", " ")
-                    lines.append("　理由：" + discord.utils.escape_markdown(short) + ("…" if len(reason) > 100 else ""))
+                        reason = str(g["note"] or "").strip()
+                    if reason and reason != "理由未指定":
+                        short = reason[:60].replace("\n", " ").replace("\r", " ")
+                        label = discord.utils.escape_markdown(short) + ("…" if len(reason) > 60 else "")
+                lines.append(f"`{g['delta']:+d}` {label}　{at:%m/%d %H:%M}")
         return "\n".join(lines)
 
     @affinity.command(name="my", description="自分の好感度・順位・直近の増減を公開表示")
@@ -494,7 +497,7 @@ class Affinity(commands.Cog):
             return await interaction.response.send_message(
                 "このサーバーのBot以外のユーザーを指定してください。", ephemeral=True)
         await interaction.response.send_message(
-            self._profile_text(user, include_history=True, show_reason=user.id == interaction.user.id), ephemeral=False,
+            self._profile_text(user, include_history=True), ephemeral=False,
             allowed_mentions=discord.AllowedMentions.none())
 
     # ---------- 全メンバーランキング（コマンドごとのメンバー取得APIなし） ----------
