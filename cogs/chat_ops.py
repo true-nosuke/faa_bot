@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 import discord
 from discord.ext import commands
 
+from .task_perms import deletable_tasks, owner_name
+
 LOGGER = logging.getLogger(__name__)
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -495,8 +497,7 @@ class ChatOps(commands.Cog):
         specs = [str(x).strip() for x in (args.get("tasks") or []) if str(x).strip()][:MAX_ITEMS]
         if not specs:
             return await self._say(message, "⚠️ 削除するタスクの番号かタスク名を教えてください。")
-        from . import tasks as tasks_mod
-        rows = tasks_mod.deletable_tasks(cog.store, message.author, message.guild.id)
+        rows = deletable_tasks(cog.store, message.author, message.guild.id)
         if not rows:
             return await self._say(message, "削除できる進行中のタスクはありません。")
         targets, errors = [], []
@@ -513,8 +514,7 @@ class ChatOps(commands.Cog):
         def owner_note(r) -> str:
             if r["owner_id"] == message.author.id:
                 return ""
-            owner = message.guild.get_member(r["owner_id"])
-            return f" 担当:{discord.utils.escape_markdown(owner.display_name) if owner else r['owner_id']}"
+            return f" 担当:{owner_name(message.guild, r['owner_id'])}"
 
         listing = "\n".join(f"・#{r['id']} {discord.utils.escape_markdown(r['name'][:60])}（{r['percent']}%）{owner_note(r)}" for r in targets)
 

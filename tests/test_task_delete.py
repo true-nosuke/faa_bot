@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from cogs import chat_ops
-from cogs.tasks import TaskStore, Tasks, can_delete_task, deletable_tasks
+from cogs.task_perms import can_delete_task, deletable_task_autocomplete, deletable_tasks
+from cogs.tasks import TaskStore, Tasks
 
 GUILD = 1
 
@@ -97,11 +98,14 @@ class SlashTests(Base):
         self.assertIn("見つかりません", self.run_delete(member(99, admin=True), self.elsewhere))
 
     def test_autocomplete(self):
-        cog = fake_cog(self.store)
-        choices = asyncio.run(cog._deletable_task_autocomplete(interaction(member(99, admin=True)), ""))
+        i = interaction(member(99, admin=True))
+        i.client.get_cog = lambda name: fake_cog(self.store)
+        choices = asyncio.run(deletable_task_autocomplete(i, ""))
         self.assertEqual(len(choices), 3)
         self.assertTrue(any("担当:担当30" in c.name for c in choices))
-        self.assertEqual(asyncio.run(cog._deletable_task_autocomplete(interaction(member(99)), "")), [])
+        j = interaction(member(99))
+        j.client.get_cog = lambda name: fake_cog(self.store)
+        self.assertEqual(asyncio.run(deletable_task_autocomplete(j, "")), [])
 
 
 class ChatTests(Base):
