@@ -138,7 +138,7 @@ TOOLS = [
               "comment": {"type": "string", "description": "一言（任意・200字まで）"}},
               "required": ["task", "progress"]}}}, ["updates"]),
     _tool("task_delete",
-          "自分のタスクを削除する（取り消せない）。「削除」「消して」など、削除の意思がはっきりしているときだけ使う。"
+          "タスクを削除する（取り消せない）。自分が担当・作成したタスクが対象で、サーバー管理者はサーバー内の全タスクを削除できる。「削除」「消して」など、削除の意思がはっきりしているときだけ使う。"
           "「終わった」「完了」は削除ではなく task_progress の100。複数まとめて削除できる",
           {"tasks": {"type": "array", "items": {"type": "string", "description": "タスク番号（#3や3）、またはタスク名の一部"}}},
           ["tasks"]),
@@ -170,8 +170,8 @@ def _clean_digits(value) -> int | None:
     return int(m.group()) if m else None
 
 
-def resolve_task(rows, spec) -> tuple[object | None, str | None]:
-    """番号（#3 / 3）またはタスク名の一部から、自分のタスクを1件に絞る。"""
+def resolve_task(rows, spec, scope: str = "あなたの進行中タスク") -> tuple[object | None, str | None]:
+    """番号（#3 / 3）またはタスク名の一部から、タスクを1件に絞る。"""
     text = str(spec or "").strip().lstrip("#＃").strip()
     if not text:
         if len(rows) == 1:
@@ -181,7 +181,7 @@ def resolve_task(rows, spec) -> tuple[object | None, str | None]:
         for r in rows:
             if r["id"] == int(text):
                 return r, None
-        return None, f"番号 #{text} のタスクは、あなたの進行中タスクにありません。"
+        return None, f"番号 #{text} のタスクは、{scope}にありません。"
     key = text.casefold()
     exact = [r for r in rows if r["name"].casefold() == key]
     found = exact or [r for r in rows if key in r["name"].casefold() or key in r["progress_name"].casefold()]
@@ -495,12 +495,13 @@ class ChatOps(commands.Cog):
         specs = [str(x).strip() for x in (args.get("tasks") or []) if str(x).strip()][:MAX_ITEMS]
         if not specs:
             return await self._say(message, "⚠️ 削除するタスクの番号かタスク名を教えてください。")
-        rows = cog.store.query(owner_id=message.author.id, guild_id=message.guild.id)
+        from . import tasks as tasks_mod
+        rows = tasks_mod.deletable_tasks(cog.store, message.author, message.guild.id)
         if not rows:
-            return await self._say(message, "このサーバーに進行中のタスクはありません。")
+            return await self._say(message, "削除できる進行中のタスクはありません。")
         targets, errors = [], []
         for spec in specs:
-            row, error = resolve_task(rows, spec)
+            row, error = resolve_task(rows, spec, "削除できるタスク")
             if error:
                 errors.append(error)
             elif all(row["id"] != t["id"] for t in targets):
@@ -509,7 +510,13 @@ class ChatOps(commands.Cog):
             await self._say(message, f"⚠️ {error}")
         if not targets:
             return
-        listing = "\n".join(f"・#{r['id']} {discord.utils.escape_markdown(r['name'][:60])}（{r['percent']}%）" for r in targets)
+        def owner_note(r) -> str:
+            if r["owner_id"] == message.author.id:
+                return ""
+            owner = message.guild.get_member(r["owner_id"])
+            return f" 担当:{discord.utils.escape_markdown(owner.display_name) if owner else r['owner_id']}"
+
+        listing = "\n".join(f"・#{r['id']} {discord.utils.escape_markdown(r['name'][:60])}（{r['percent']}%）{owner_note(r)}" for r in targets)
 
         async def run():
             for r in targets:
