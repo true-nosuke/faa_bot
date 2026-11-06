@@ -20,6 +20,9 @@ LOGGER = logging.getLogger(__name__)
 WORKER = Path(__file__).parent.parent / "renderer_worker.py"
 
 TRIGGER_EMOJI = "<:typst:1558680485427679422>"
+# 手動トリガー用。typst絵文字は元のサーバー以外ではユーザーが付けられないため、
+# デフォルト絵文字の「🇹」（regional indicator T）でも変換できるようにする
+MANUAL_TRIGGER_EMOJI = "🇹"
 RENDER_TIMEOUT = 30  # 秒（パッケージの初回ダウンロードを含む）
 MAX_CODE_CHARS = 4000
 MAX_MATH_SPANS = 10
@@ -33,7 +36,9 @@ PREAMBLE = """\
 """
 
 CODE_BLOCK_RE = re.compile(r"```(?:typst|typ)[ \t]*\r?\n(.*?)```", re.DOTALL | re.IGNORECASE)
+GENERIC_CODE_BLOCK_RE = re.compile(r"```[a-zA-Z0-9]*[ \t]*\r?\n(.*?)```", re.DOTALL)
 RAW_TYPST_RE = re.compile(r'(?m)^\s*#import\s+"@preview/[a-z0-9-]+:\d+\.\d+\.\d+"')
+RAW_COMMAND_RE = re.compile(r"(?m)^\s*#(let|set|show|import|include|context|for|if|while)\b")
 ANY_CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
 DISPLAY_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 INLINE_RE = re.compile(r"(?<![\\$])\$(?![\s$])([^$\n]+?)(?<![\s$])\$(?!\$)")
@@ -91,6 +96,43 @@ def extract_source(content: str) -> str | None:
     return PREAMBLE + "\n".join(f"$ {b} $\n" for b in bodies)
 
 
+def extract_manual_source(content: str) -> str | None:
+    """ユーザーが typst 絵文字を手動で付けたとき用。自動検知より広く拾う。
+
+    - 自動検知できたものはそのまま使う
+    - 言語指定のないコードブロックや、# で始まるコマンド列 → Typstコードとして変換する
+    - 日本語を含むもの → Typst文書としてそのまま変換する（数式に包むとエラーになるため）
+    - それ以外 → $ と ` を取り除いて、全文を1つの数式として変換する
+      （$ のない数式や、$...$ の個数が上限を超えて検知されなかった場合の救済）
+    """
+    source = extract_source(content)
+    if source is not None:
+        return source
+    text = content.strip()
+    if not text or len(text) > MAX_CODE_CHARS:
+        return None
+    blocks = GENERIC_CODE_BLOCK_RE.findall(text)
+    if blocks:
+        code = "\n\n".join(b.strip("\n") for b in blocks).strip()
+        if not code or has_forbidden_import(code):
+            return None
+        return PREAMBLE + code
+    if RAW_COMMAND_RE.search(text):
+        if has_forbidden_import(text):
+            return None
+        return PREAMBLE + text
+    if re.search(r"[぀-ヿ一-鿿]", text):
+        # 日本語を含むものは数式に包むと変数扱いでエラーになるので、Typst文書としてそのまま変換する
+        # （文書中では $...$ の数式や # コマンドもそのまま有効）
+        if has_forbidden_import(text):
+            return None
+        return PREAMBLE + text
+    body = " ".join(text.replace("$", " ").replace("`", " ").split())
+    if not body:
+        return None
+    return PREAMBLE + f"$ {body} $\n"
+
+
 class TypstRender(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -104,6 +146,7 @@ class TypstRender(commands.Cog):
         self.seen_with_content = 0
         self.matched = 0
         self.reacted = 0
+        self.manual = 0  # 自動検知されなかったものを手動トリガーで変換した件数
         self.last_error = "なし"
 
     async def cog_load(self):
@@ -178,6 +221,7 @@ class TypstRender(commands.Cog):
             "",
             f"起動後に受け取ったメッセージ: {self.seen} 件（本文あり {self.seen_with_content} 件）",
             f"Typstとして対象になったメッセージ: {self.matched} 件 / {TRIGGER_EMOJI} を付けた: {self.reacted} 件",
+            f"手動トリガー（自動検知されなかったもの）で変換したメッセージ: {self.manual} 件",
             f"直近のエラー: {self.last_error}",
         ]
         if self.seen > 0 and self.seen_with_content == 0:
@@ -217,10 +261,10 @@ class TypstRender(commands.Cog):
             self.last_error = f"リアクション追加に失敗: {e}"
             print(f"[typst_render] {self.last_error}", flush=True)
 
-    # ---- typst 絵文字が押された → 画像を返信 ----
+    # ---- typst 絵文字（または手動用の 🇹）が押された → 画像を返信 ----
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        if str(payload.emoji) != TRIGGER_EMOJI or payload.guild_id is None:
+        if str(payload.emoji) not in (TRIGGER_EMOJI, MANUAL_TRIGGER_EMOJI) or payload.guild_id is None:
             return
         if payload.user_id == self.bot.user.id or payload.message_id in self.done:
             return
@@ -240,12 +284,13 @@ class TypstRender(commands.Cog):
             message = await channel.fetch_message(payload.message_id)
         except discord.HTTPException:
             return
-        # Botが付けた typst 絵文字がある（= 変換できると確認済み）メッセージだけ対象にする
-        if not any(str(r.emoji) == TRIGGER_EMOJI and r.me for r in message.reactions):
-            return
-        source = extract_source(message.content)
+        # Botが付けた絵文字でなくても、ユーザーが手動で付けたら変換する。
+        # 自動検知されなかったメッセージは extract_manual_source で広く拾う
+        source = extract_manual_source(message.content)
         if source is None:
             return
+        if extract_source(message.content) is None:
+            self.manual += 1
 
         self.done[message.id] = None
         while len(self.done) > 500:
