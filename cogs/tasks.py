@@ -16,6 +16,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from .task_perms import can_delete_task, deletable_task_autocomplete, owner_name
+
 LOGGER = logging.getLogger(__name__)
 JST = ZoneInfo("Asia/Tokyo")
 DB_PATH = Path(__file__).parent.parent / "bot.db"
@@ -962,7 +964,7 @@ class Tasks(commands.Cog):
             choices.append(app_commands.Choice(name=label[:100], value=r["id"]))
         return choices[:25]
 
-    @task.command(name="delete", description="タスクを削除し、確認を止める（番号を省略すると自分のタスク一覧）")
+    @task.command(name="delete", description="タスクを削除し、確認を止める（担当者・作成者・サーバー管理者）")
     @app_commands.describe(task_id="タスク番号（省略すると、このサーバーの自分のタスク一覧を表示）")
     async def delete(self, interaction: discord.Interaction, task_id: Optional[int] = None):
         if task_id is None:
@@ -972,15 +974,15 @@ class Tasks(commands.Cog):
         row = self.store.get(task_id)
         if row is None or row["guild_id"] != interaction.guild_id:
             return await interaction.response.send_message("⚠️ そのタスクは見つかりません。", ephemeral=True)
-        is_admin = interaction.user.guild_permissions.manage_guild
-        if interaction.user.id != row["owner_id"] and not is_admin:
+        if not can_delete_task(interaction.user, row):
             return await interaction.response.send_message(
-                "⚠️ 削除できるのは担当者かサーバー管理者だけです。", ephemeral=True
+                "⚠️ 削除できるのは担当者・作成者・サーバー管理者だけです。", ephemeral=True
             )
         await self._disable_last_message(row)
         self.store.delete(task_id)
+        note = "" if row["owner_id"] == interaction.user.id else f"（担当: {owner_name(interaction.guild, row['owner_id'])}）"
         await interaction.response.send_message(
-            f"🗑️ タスク #{task_id}「{discord.utils.escape_markdown(row['name'])}」を削除しました。"
+            f"🗑️ タスク #{task_id}「{discord.utils.escape_markdown(row['name'])}」{note}を削除しました。"
         )
 
     @task.command(name="progress", description="タスクの進捗を更新する（省略すると自分のタスク一覧）")
@@ -1041,7 +1043,7 @@ class Tasks(commands.Cog):
             return await interaction.followup.send("進捗・一言は保存しましたが、チャンネルへ投稿できませんでした。",ephemeral=True)
         await interaction.followup.send("進捗を更新し、タスクのチャンネルに投稿しました。",ephemeral=True)
 
-    delete.autocomplete("task_id")(_own_task_autocomplete)
+    delete.autocomplete("task_id")(deletable_task_autocomplete)
     update_progress.autocomplete("task_id")(_own_task_autocomplete)
 
     @app_commands.command(name="pick-task", description="自分の進行中タスクからランダムに1つ選ぶ")
