@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cogs.reaction_rank import (JST, emoji_matches, format_ranking, match_count,
-                                parse_emoji, rank_records, scan_channel, year_start)
+from cogs.reaction_rank import (JST, PAGE_SIZE, RankingView, emoji_matches,
+                                format_pages, match_count, parse_emoji,
+                                rank_records, scan_channel, year_start)
 
 
 def fake_message(content="本文", reactions=(), created_at=None, jump_url="https://example.com/m"):
@@ -79,20 +80,52 @@ class RankTests(unittest.TestCase):
 
 
 class FormatTests(unittest.TestCase):
-    def test_chunks_within_limit(self):
+    def build_records(self, n):
+        from cogs.reaction_rank import make_record
         records = []
-        for i in range(25):
+        for i in range(n):
             m = fake_message(content="あ" * 80, jump_url=f"https://example.com/{i}")
-            from cogs.reaction_rank import make_record
-            records.append(make_record(m, 25 - i))
-        chunks = format_ranking("⭐", records, "2026年", 12345, 6)
-        self.assertTrue(all(len(c) <= 1900 for c in chunks))
-        self.assertIn("⭐×25", chunks[0])
+            records.append(make_record(m, n - i))
+        return records
+
+    def test_markdown_shape(self):
+        pages = format_pages("⭐", self.build_records(3), "2026年", 100, 4)
+        self.assertEqual(len(pages), 1)
+        self.assertIn("## ⭐ リアクションランキング（2026年）", pages[0])
+        self.assertIn("### 1位　⭐×3", pages[0])
+        self.assertIn("> " + "あ" * 80, pages[0])
+        self.assertIn("[メッセージへ](https://example.com/0)", pages[0])
+        self.assertNotIn("ページ 1 /", pages[0])  # 1ページだけならフッターなし
+
+    def test_pagination(self):
+        pages = format_pages("⭐", self.build_records(25), "2026年", 12345, 6)
+        self.assertEqual(len(pages), 25 // PAGE_SIZE)
+        self.assertTrue(all(len(p) <= 2000 for p in pages))
+        self.assertIn("### 1位　⭐×25", pages[0])
+        self.assertIn(f"### {PAGE_SIZE + 1}位", pages[1])  # 順位はページをまたいで連続
+        self.assertIn(f"ページ 2 / {len(pages)}", pages[1])
 
     def test_empty(self):
-        chunks = format_ranking("⭐", [], "2026年", 10, 2)
-        self.assertEqual(len(chunks), 1)
-        self.assertIn("見つからなかった", chunks[0])
+        pages = format_pages("⭐", [], "2026年", 10, 2)
+        self.assertEqual(len(pages), 1)
+        self.assertIn("見つからなかった", pages[0])
+
+
+class ViewTests(unittest.TestCase):
+    def test_button_states_follow_index(self):
+        view = RankingView(["p1", "p2", "p3"])
+        self.assertTrue(view.prev_page.disabled)
+        self.assertFalse(view.next_page.disabled)
+        self.assertEqual(view.page_label.label, "1 / 3")
+        view.index = 1
+        view._sync_buttons()
+        self.assertFalse(view.prev_page.disabled)
+        self.assertFalse(view.next_page.disabled)
+        self.assertEqual(view.page_label.label, "2 / 3")
+        view.index = 2
+        view._sync_buttons()
+        self.assertTrue(view.next_page.disabled)
+        self.assertEqual(view.page_label.label, "3 / 3")
 
 
 class ScanTests(unittest.IsolatedAsyncioTestCase):
@@ -112,6 +145,11 @@ class ScanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scanned, 3)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["count"], 4)
+
+    async def test_view_timeout_disables_buttons(self):
+        view = RankingView(["p1", "p2"])
+        await view.on_timeout()
+        self.assertTrue(all(c.disabled for c in view.children))
 
 
 if __name__ == "__main__":
