@@ -22,7 +22,8 @@ JST = ZoneInfo("Asia/Tokyo")
 MAX_COUNT = 25
 DEFAULT_COUNT = 10
 SNIPPET_LEN = 80
-CHUNK_LIMIT = 1900
+PAGE_SIZE = 5
+VIEW_TIMEOUT = 600  # ページ切り替えボタンの有効時間（秒）
 
 CUSTOM_EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]{2,32}):(\d{15,25})>$")
 
@@ -84,31 +85,77 @@ def make_record(message, count: int) -> dict:
     }
 
 
-def format_ranking(emoji_text: str, records: list[dict], scope_label: str,
-                   scanned: int, channels: int) -> list[str]:
-    """結果テキストを Discord の文字数制限に収まる塊のリストにする。"""
-    header = (f"**{emoji_text} リアクションランキング（{scope_label}）**\n"
-              f"走査: {channels}チャンネル・スレッド / {scanned}件のメッセージ")
+def format_entry(emoji_text: str, rank: int, record: dict) -> str:
+    """1件分の Markdown ブロック。"""
+    date = record["created_at"].astimezone(JST).strftime("%Y/%m/%d")
+    return (f"### {rank}位　{emoji_text}×{record['count']}\n"
+            f"> {record['snippet']}\n"
+            f"{record['author']} ・ #{record['channel']} ・ {date} ・ "
+            f"[メッセージへ]({record['url']})")
+
+
+def format_pages(emoji_text: str, records: list[dict], scope_label: str,
+                 scanned: int, channels: int) -> list[str]:
+    """結果を Markdown 整形し、PAGE_SIZE 件ずつのページ文字列のリストにする。"""
+    header = (f"## {emoji_text} リアクションランキング（{scope_label}）\n"
+              f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
     if not records:
         return [header + "\n対象のリアクションが付いたメッセージは見つからなかったよ。"]
-    lines = [header]
-    for i, r in enumerate(records, 1):
-        date = r["created_at"].astimezone(JST).strftime("%Y/%m/%d")
-        lines.append(
-            f"{i}. {emoji_text}×{r['count']}　{r['author']}（#{r['channel']}・{date}）\n"
-            f"{r['snippet']}\n{r['url']}")
-    chunks: list[str] = []
-    current = ""
-    for line in lines:
-        candidate = line if not current else current + "\n" + line
-        if len(candidate) > CHUNK_LIMIT and current:
-            chunks.append(current)
-            current = line
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    return chunks
+    entries = [format_entry(emoji_text, i, r) for i, r in enumerate(records, 1)]
+    total = (len(entries) + PAGE_SIZE - 1) // PAGE_SIZE
+    pages = []
+    for p in range(total):
+        body = "\n\n".join(entries[p * PAGE_SIZE:(p + 1) * PAGE_SIZE])
+        text = f"{header}\n\n{body}"
+        if total > 1:
+            text += f"\n\n-# ページ {p + 1} / {total}"
+        pages.append(text)
+    return pages
+
+
+class RankingView(discord.ui.View):
+    """ランキングのページ切り替えボタン。誰でも押せる。"""
+
+    def __init__(self, pages: list[str]):
+        super().__init__(timeout=VIEW_TIMEOUT)
+        self.pages = pages
+        self.index = 0
+        self.message: discord.Message | None = None
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        self.prev_page.disabled = self.index <= 0
+        self.next_page.disabled = self.index >= len(self.pages) - 1
+        self.page_label.label = f"{self.index + 1} / {len(self.pages)}"
+
+    async def _show(self, interaction: discord.Interaction):
+        self._sync_buttons()
+        await interaction.response.edit_message(content=self.pages[self.index], view=self)
+
+    @discord.ui.button(label="前へ", emoji="◀", style=discord.ButtonStyle.secondary)
+    async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.index > 0:
+            self.index -= 1
+        await self._show(interaction)
+
+    @discord.ui.button(label="1 / 1", style=discord.ButtonStyle.secondary, disabled=True)
+    async def page_label(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass  # 表示専用（disabled なので押せない）
+
+    @discord.ui.button(label="次へ", emoji="▶", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.index < len(self.pages) - 1:
+            self.index += 1
+        await self._show(interaction)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 async def scan_channel(channel, target: discord.PartialEmoji,
@@ -182,11 +229,14 @@ class ReactionRank(commands.Cog):
                             f"{channels}チャンネル・{scanned}件を走査済み"))
                     except discord.HTTPException:
                         pass
-            chunks = format_ranking(emoji_text, rank_records(records, limit),
-                                    scope_label, scanned, channels)
-            await status.edit(content=chunks[0])
-            for extra in chunks[1:]:
-                await status.channel.send(extra)
+            pages = format_pages(emoji_text, rank_records(records, limit),
+                                 scope_label, scanned, channels)
+            if len(pages) > 1:
+                view = RankingView(pages)
+                await status.edit(content=pages[0], view=view)
+                view.message = status
+            else:
+                await status.edit(content=pages[0])
         except Exception:
             LOGGER.exception("reaction-rank: 走査に失敗")
             try:
