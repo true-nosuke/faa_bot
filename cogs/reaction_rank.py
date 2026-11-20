@@ -65,9 +65,52 @@ def year_start(now: datetime | None = None) -> datetime:
     return datetime(now.year, 1, 1, tzinfo=JST)
 
 
+def past_year_start(now: datetime | None = None) -> datetime:
+    """過去1年の範囲の下限（ちょうど1年前の同時刻）。"""
+    now = now or datetime.now(JST)
+    try:
+        return now.replace(year=now.year - 1)
+    except ValueError:  # 2月29日には前年に同じ日が無い
+        return now.replace(year=now.year - 1, day=28)
+
+
+def period_start(scope: str, now: datetime | None = None) -> datetime | None:
+    """scope（year / past_year / all）に対応する走査の下限。全期間は None。"""
+    if scope == "year":
+        return year_start(now)
+    if scope == "past_year":
+        return past_year_start(now)
+    return None
+
+
 def rank_records(records: list[dict], limit: int) -> list[dict]:
     """個数の多い順、同数は古い順に並べて上位 limit 件を返す。"""
     return sorted(records, key=lambda r: (-r["count"], r["created_at"]))[:limit]
+
+
+def aggregate_users(records: list[dict], limit: int) -> list[dict]:
+    """投稿者ごとに累計を集計する。Bot の投稿は除く。
+
+    各ユーザーは {author, total, messages, best, first_at}。
+    並びは累計の多い順、同数は最初にヒットした投稿が古い順。
+    """
+    users: dict = {}
+    for r in records:
+        if r.get("author_bot"):
+            continue
+        key = r.get("author_id") or r["author"]
+        u = users.get(key)
+        if u is None:
+            u = users[key] = {"author": r["author"], "total": 0, "messages": 0,
+                              "best": r, "first_at": r["created_at"]}
+        u["total"] += r["count"]
+        u["messages"] += 1
+        if r["count"] > u["best"]["count"]:
+            u["best"] = r
+        if r["created_at"] < u["first_at"]:
+            u["first_at"] = r["created_at"]
+    ranked = sorted(users.values(), key=lambda u: (-u["total"], u["first_at"]))
+    return ranked[:limit]
 
 
 def make_record(message, count: int) -> dict:
@@ -79,6 +122,8 @@ def make_record(message, count: int) -> dict:
         "count": count,
         "created_at": message.created_at,
         "author": str(message.author),
+        "author_id": getattr(message.author, "id", None),
+        "author_bot": bool(getattr(message.author, "bot", False)),
         "channel": getattr(channel, "name", None) or str(getattr(channel, "id", "")),
         "snippet": content or "（本文なし）",
         "url": message.jump_url,
@@ -94,14 +139,10 @@ def format_entry(emoji_text: str, rank: int, record: dict) -> str:
             f"[メッセージへ]({record['url']})")
 
 
-def format_pages(emoji_text: str, records: list[dict], scope_label: str,
-                 scanned: int, channels: int) -> list[str]:
-    """結果を Markdown 整形し、PAGE_SIZE 件ずつのページ文字列のリストにする。"""
-    header = (f"## {emoji_text} リアクションランキング（{scope_label}）\n"
-              f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
-    if not records:
-        return [header + "\n対象のリアクションが付いたメッセージは見つからなかったよ。"]
-    entries = [format_entry(emoji_text, i, r) for i, r in enumerate(records, 1)]
+def _paginate(header: str, entries: list[str], empty_text: str) -> list[str]:
+    """ヘッダー＋エントリ列を PAGE_SIZE 件ずつのページ文字列にする。"""
+    if not entries:
+        return [header + "\n" + empty_text]
     total = (len(entries) + PAGE_SIZE - 1) // PAGE_SIZE
     pages = []
     for p in range(total):
@@ -111,6 +152,37 @@ def format_pages(emoji_text: str, records: list[dict], scope_label: str,
             text += f"\n\n-# ページ {p + 1} / {total}"
         pages.append(text)
     return pages
+
+
+def format_pages(emoji_text: str, records: list[dict], scope_label: str,
+                 scanned: int, channels: int) -> list[str]:
+    """メッセージ別ランキングを Markdown 整形したページのリストにする。"""
+    header = (f"## {emoji_text} リアクションランキング（{scope_label}）\n"
+              f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
+    entries = [format_entry(emoji_text, i, r) for i, r in enumerate(records, 1)]
+    return _paginate(header, entries,
+                     "対象のリアクションが付いたメッセージは見つからなかったよ。")
+
+
+def format_user_entry(emoji_text: str, rank: int, user: dict) -> str:
+    """ユーザー別ランキングの1件分の Markdown ブロック。"""
+    best = user["best"]
+    date = best["created_at"].astimezone(JST).strftime("%Y/%m/%d")
+    return (f"### {rank}位　{emoji_text}×{user['total']}\n"
+            f"{user['author']} ・ 対象メッセージ{user['messages']}件\n"
+            f"> {best['snippet']}\n"
+            f"最多は {emoji_text}×{best['count']}（#{best['channel']} ・ {date} ・ "
+            f"[メッセージへ]({best['url']})）")
+
+
+def format_user_pages(emoji_text: str, users: list[dict], scope_label: str,
+                      scanned: int, channels: int) -> list[str]:
+    """ユーザー別（累計）ランキングを Markdown 整形したページのリストにする。"""
+    header = (f"## {emoji_text} リアクション ユーザーランキング（{scope_label}）\n"
+              f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
+    entries = [format_user_entry(emoji_text, i, u) for i, u in enumerate(users, 1)]
+    return _paginate(header, entries,
+                     "対象のリアクションを得たユーザーはいなかったよ。")
 
 
 class RankingView(discord.ui.View):
@@ -210,7 +282,8 @@ class ReactionRank(commands.Cog):
 
     async def _run_scan(self, guild: discord.Guild, status: discord.Message,
                         target: discord.PartialEmoji, emoji_text: str,
-                        limit: int, scope_label: str, after: datetime | None):
+                        limit: int, scope_label: str, after: datetime | None,
+                        mode: str = "message"):
         records: list[dict] = []
         scanned = 0
         channels = 0
@@ -229,8 +302,12 @@ class ReactionRank(commands.Cog):
                             f"{channels}チャンネル・{scanned}件を走査済み"))
                     except discord.HTTPException:
                         pass
-            pages = format_pages(emoji_text, rank_records(records, limit),
-                                 scope_label, scanned, channels)
+            if mode == "user":
+                pages = format_user_pages(emoji_text, aggregate_users(records, limit),
+                                          scope_label, scanned, channels)
+            else:
+                pages = format_pages(emoji_text, rank_records(records, limit),
+                                     scope_label, scanned, channels)
             if len(pages) > 1:
                 view = RankingView(pages)
                 await status.edit(content=pages[0], view=view)
@@ -252,14 +329,21 @@ class ReactionRank(commands.Cog):
         emoji="数える絵文字（Unicode絵文字 or カスタム絵文字）",
         count="表示する件数（1〜25、省略時は10）",
         scope="対象期間（省略時は今年）",
+        mode="集計単位（省略時はメッセージ別）",
     )
     @app_commands.choices(scope=[
         app_commands.Choice(name="今年", value="year"),
+        app_commands.Choice(name="過去1年", value="past_year"),
         app_commands.Choice(name="全期間", value="all"),
+    ])
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="メッセージ別", value="message"),
+        app_commands.Choice(name="ユーザー別（累計）", value="user"),
     ])
     @app_commands.guild_only()
     async def reaction_rank(self, interaction: discord.Interaction,
-                            emoji: str, count: int = DEFAULT_COUNT, scope: str = "year"):
+                            emoji: str, count: int = DEFAULT_COUNT, scope: str = "year",
+                            mode: str = "message"):
         guild = interaction.guild
         if guild.id in self._running:
             await interaction.response.send_message(
@@ -276,15 +360,20 @@ class ReactionRank(commands.Cog):
                 f"件数は1〜{MAX_COUNT}で指定してください。", ephemeral=True)
             return
         self._running.add(guild.id)
-        after = year_start() if scope == "year" else None
-        scope_label = f"{after.year}年" if after else "全期間"
+        after = period_start(scope)
+        if scope == "past_year":
+            scope_label = "過去1年"
+        elif after is not None:
+            scope_label = f"{after.year}年"
+        else:
+            scope_label = "全期間"
         emoji_text = str(target)
         await interaction.response.send_message(
             f"{emoji_text} の集計を開始します（{scope_label}）。結果はこのチャンネルに出します。", ephemeral=True)
         status = await interaction.channel.send(
             f"🔍 {emoji_text} のリアクションを集計中… サーバーの履歴を走査しています")
         asyncio.create_task(self._run_scan(
-            guild, status, target, emoji_text, count, scope_label, after))
+            guild, status, target, emoji_text, count, scope_label, after, mode))
 
 
 async def setup(bot: commands.Bot):
