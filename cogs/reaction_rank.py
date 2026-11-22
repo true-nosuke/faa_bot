@@ -7,9 +7,11 @@ Bot が読める全チャンネル・スレッドの履歴を走査して集計�
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import discord
@@ -24,6 +26,9 @@ DEFAULT_COUNT = 10
 SNIPPET_LEN = 80
 PAGE_SIZE = 5
 VIEW_TIMEOUT = 600  # ページ切り替えボタンの有効時間（秒）
+CACHE_FILE = Path(__file__).parent.parent / "reaction_rank_cache.json"
+OVERLAP_DAYS = 7  # 差分走査でキャッシュ末尾からさかのぼって再走査する日数
+MAX_CACHE_EMOJIS = 10  # 1回のキャッシュ作成で指定できる絵文字の上限
 
 CUSTOM_EMOJI_RE = re.compile(r"^<(a?):([A-Za-z0-9_]{2,32}):(\d{15,25})>$")
 
@@ -124,10 +129,140 @@ def make_record(message, count: int) -> dict:
         "author": str(message.author),
         "author_id": getattr(message.author, "id", None),
         "author_bot": bool(getattr(message.author, "bot", False)),
+        "message_id": getattr(message, "id", None),
+        "channel_id": getattr(channel, "id", None),
         "channel": getattr(channel, "name", None) or str(getattr(channel, "id", "")),
         "snippet": content or "（本文なし）",
         "url": message.jump_url,
     }
+
+
+def emoji_key(target: discord.PartialEmoji) -> str:
+    """キャッシュのキー。カスタム絵文字は ID、Unicode 絵文字は文字そのもの。"""
+    return f"custom:{target.id}" if target.id else f"unicode:{target.name}"
+
+
+def parse_emojis(text: str) -> tuple[list[discord.PartialEmoji], list[str]]:
+    """空白・カンマ区切りの複数絵文字をパースする。(成功リスト, 失敗トークン) を返す。"""
+    valid: list[discord.PartialEmoji] = []
+    invalid: list[str] = []
+    seen: set[str] = set()
+    for token in re.split(r"[\s,]+", (text or "").strip()):
+        if not token:
+            continue
+        parsed = parse_emoji(token)
+        if parsed is None:
+            invalid.append(token)
+        elif emoji_key(parsed) not in seen:
+            seen.add(emoji_key(parsed))
+            valid.append(parsed)
+    return valid, invalid
+
+
+def serialize_record(record: dict) -> dict:
+    data = dict(record)
+    data["created_at"] = record["created_at"].isoformat()
+    return data
+
+
+def deserialize_record(data: dict) -> dict:
+    record = dict(data)
+    record["created_at"] = datetime.fromisoformat(data["created_at"])
+    return record
+
+
+def load_cache(path) -> dict:
+    """キャッシュファイルを読み込む。無い・壊れている場合は空 dict。
+
+    構造: {guild_id(int): {emoji_key: {emoji, cached_until(datetime),
+    coverage_start(datetime|None), records}}}
+    """
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    cache: dict = {}
+    for gid, per_guild in (raw.get("guilds") or {}).items():
+        entries = {}
+        for key, e in (per_guild or {}).items():
+            try:
+                entries[key] = {
+                    "emoji": e["emoji"],
+                    "cached_until": datetime.fromisoformat(e["cached_until"]),
+                    "coverage_start": (datetime.fromisoformat(e["coverage_start"])
+                                       if e.get("coverage_start") else None),
+                    "records": [deserialize_record(r) for r in e.get("records", [])],
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+        try:
+            cache[int(gid)] = entries
+        except (TypeError, ValueError):
+            continue
+    return cache
+
+
+def save_cache(path, cache: dict) -> None:
+    """キャッシュを JSON で保存する（一時ファイル経由で原子的に差し替える）。"""
+    data = {"guilds": {}}
+    for gid, per_guild in cache.items():
+        data["guilds"][str(gid)] = {
+            key: {
+                "emoji": e["emoji"],
+                "cached_until": e["cached_until"].isoformat(),
+                "coverage_start": (e["coverage_start"].isoformat()
+                                   if e["coverage_start"] else None),
+                "records": [serialize_record(r) for r in e["records"]],
+            }
+            for key, e in per_guild.items()
+        }
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        LOGGER.warning("reaction-rank: キャッシュを保存できませんでした", exc_info=True)
+
+
+def cache_covers(entry: dict | None, start: datetime | None) -> bool:
+    """キャッシュが、開始日時 start 以降の期間をカバーしているか。"""
+    if entry is None:
+        return False
+    if entry["coverage_start"] is None:
+        return True
+    return start is not None and entry["coverage_start"] <= start
+
+
+def wider_coverage(a: datetime | None, b: datetime | None) -> datetime | None:
+    """2つのカバー開始日時のうち広い方（None は全期間＝最も広い）。"""
+    if a is None or b is None:
+        return None
+    return min(a, b)
+
+
+def merge_records(cached: list[dict], fresh: list[dict],
+                  window_start: datetime | None) -> list[dict]:
+    """キャッシュと再走査分を合体させる。
+
+    window_start 以降のキャッシュ分は fresh 側で置き換える（fresh に無いものは
+    リアクションが消えた／削除されたとして落とす）。window_start が None なら
+    全件 fresh で置き換える。
+    """
+    if window_start is None:
+        return list(fresh)
+    fresh_ids = {r["message_id"] for r in fresh if r.get("message_id") is not None}
+    merged = [r for r in cached
+              if r["created_at"] < window_start and r.get("message_id") not in fresh_ids]
+    merged.extend(fresh)
+    return merged
+
+
+def filter_records(records: list[dict], start: datetime | None) -> list[dict]:
+    """開始日時以降のレコードだけに絞る（None なら全件）。"""
+    if start is None:
+        return list(records)
+    return [r for r in records if r["created_at"] >= start]
 
 
 def format_entry(emoji_text: str, rank: int, record: dict) -> str:
@@ -155,10 +290,12 @@ def _paginate(header: str, entries: list[str], empty_text: str) -> list[str]:
 
 
 def format_pages(emoji_text: str, records: list[dict], scope_label: str,
-                 scanned: int, channels: int) -> list[str]:
+                 scanned: int, channels: int, note: str = "") -> list[str]:
     """メッセージ別ランキングを Markdown 整形したページのリストにする。"""
     header = (f"## {emoji_text} リアクションランキング（{scope_label}）\n"
               f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
+    if note:
+        header += f"\n{note}"
     entries = [format_entry(emoji_text, i, r) for i, r in enumerate(records, 1)]
     return _paginate(header, entries,
                      "対象のリアクションが付いたメッセージは見つからなかったよ。")
@@ -176,10 +313,12 @@ def format_user_entry(emoji_text: str, rank: int, user: dict) -> str:
 
 
 def format_user_pages(emoji_text: str, users: list[dict], scope_label: str,
-                      scanned: int, channels: int) -> list[str]:
+                      scanned: int, channels: int, note: str = "") -> list[str]:
     """ユーザー別（累計）ランキングを Markdown 整形したページのリストにする。"""
     header = (f"## {emoji_text} リアクション ユーザーランキング（{scope_label}）\n"
               f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
+    if note:
+        header += f"\n{note}"
     entries = [format_user_entry(emoji_text, i, u) for i, u in enumerate(users, 1)]
     return _paginate(header, entries,
                      "対象のリアクションを得たユーザーはいなかったよ。")
@@ -242,10 +381,71 @@ async def scan_channel(channel, target: discord.PartialEmoji,
     return scanned
 
 
+async def scan_channel_multi(channel, jobs: list, after: datetime | None) -> int:
+    """複数絵文字を1回の履歴走査でまとめて拾う。
+
+    jobs は (target, window_start, sink) のリスト。メッセージが window_start
+    より前ならその絵文字については対象外。走査件数を返す。
+    """
+    scanned = 0
+    async for message in channel.history(limit=None, after=after):
+        scanned += 1
+        for target, window_start, sink in jobs:
+            if window_start is not None and message.created_at < window_start:
+                continue
+            count = match_count(message, target)
+            if count > 0:
+                sink.append(make_record(message, count))
+    return scanned
+
+
 class ReactionRank(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._running: set[int] = set()
+        self.cache_path = CACHE_FILE
+        self.cache: dict = load_cache(self.cache_path)
+
+    def _store_entry(self, guild_id: int, target: discord.PartialEmoji,
+                     records: list[dict], coverage_start: datetime | None,
+                     cached_until: datetime):
+        """1絵文字ぶんのキャッシュを更新して保存する。"""
+        self.cache.setdefault(guild_id, {})[emoji_key(target)] = {
+            "emoji": str(target),
+            "cached_until": cached_until,
+            "coverage_start": coverage_start,
+            "records": records,
+        }
+        save_cache(self.cache_path, self.cache)
+
+    async def _message_exists(self, record: dict) -> bool:
+        """キャッシュ由来のレコードの実在確認。消えていたら False。"""
+        message_id = record.get("message_id")
+        channel_id = record.get("channel_id")
+        if not message_id or not channel_id:
+            return True
+        channel = self.bot.get_channel(channel_id)
+        if channel is None or not hasattr(channel, "fetch_message"):
+            return True
+        try:
+            await channel.fetch_message(message_id)
+            return True
+        except discord.NotFound:
+            return False
+        except (discord.Forbidden, discord.HTTPException):
+            return True
+
+    async def _top_existing(self, records: list[dict], limit: int) -> list[dict]:
+        """上位から実在するものだけを limit 件集める（キャッシュ併用時の削除対策）。"""
+        chosen: list[dict] = []
+        attempts = 0
+        for record in rank_records(records, len(records)):
+            if len(chosen) >= limit or attempts >= limit + 10:
+                break
+            attempts += 1
+            if await self._message_exists(record):
+                chosen.append(record)
+        return chosen
 
     async def _targets(self, guild: discord.Guild):
         """Bot が履歴を読めるチャンネルとスレッドを列挙する（重複は除く）。"""
@@ -287,11 +487,22 @@ class ReactionRank(commands.Cog):
         records: list[dict] = []
         scanned = 0
         channels = 0
+        scan_started = datetime.now(timezone.utc)
+        entry = (self.cache.get(guild.id) or {}).get(emoji_key(target))
+        use_cache = cache_covers(entry, after)
+        if use_cache:
+            window = entry["cached_until"] - timedelta(days=OVERLAP_DAYS)
+            if after is not None and after > window:
+                window = after
+            coverage = entry["coverage_start"]
+        else:
+            window = after
+            coverage = after
         try:
             async for channel in self._targets(guild):
                 channels += 1
                 try:
-                    scanned += await scan_channel(channel, target, after, records)
+                    scanned += await scan_channel(channel, target, window, records)
                 except (discord.Forbidden, discord.HTTPException) as exc:
                     LOGGER.info("reaction-rank: #%s を走査できずスキップ: %s",
                                 getattr(channel, "name", channel.id), exc)
@@ -302,11 +513,22 @@ class ReactionRank(commands.Cog):
                             f"{channels}チャンネル・{scanned}件を走査済み"))
                     except discord.HTTPException:
                         pass
-            if mode == "user":
-                pages = format_user_pages(emoji_text, aggregate_users(records, limit),
-                                          scope_label, scanned, channels)
+            if use_cache:
+                merged = merge_records(entry["records"], records, window)
+                note = (f"キャッシュ併用：{entry['cached_until'].astimezone(JST):%Y/%m/%d %H:%M} "
+                        f"時点のキャッシュ＋差分走査（直近{OVERLAP_DAYS}日は再走査）")
             else:
-                pages = format_pages(emoji_text, rank_records(records, limit),
+                merged = records
+                note = ""
+            ranked_source = filter_records(merged, after)
+            if mode == "user":
+                pages = format_user_pages(emoji_text, aggregate_users(ranked_source, limit),
+                                          scope_label, scanned, channels, note=note)
+            elif use_cache:
+                pages = format_pages(emoji_text, await self._top_existing(ranked_source, limit),
+                                     scope_label, scanned, channels, note=note)
+            else:
+                pages = format_pages(emoji_text, rank_records(ranked_source, limit),
                                      scope_label, scanned, channels)
             if len(pages) > 1:
                 view = RankingView(pages)
@@ -314,10 +536,85 @@ class ReactionRank(commands.Cog):
                 view.message = status
             else:
                 await status.edit(content=pages[0])
+            self._store_entry(guild.id, target, merged, coverage, scan_started)
         except Exception:
             LOGGER.exception("reaction-rank: 走査に失敗")
             try:
                 await status.edit(content="集計中にエラーが起きたため中断しました。")
+            except discord.HTTPException:
+                pass
+        finally:
+            self._running.discard(guild.id)
+
+    async def _run_cache_build(self, interaction: discord.Interaction,
+                               guild: discord.Guild,
+                               targets: list[discord.PartialEmoji],
+                               scope: str, rebuild: bool):
+        """キャッシュだけを作る。結果（ランキング・件数）は一切出さない。"""
+        try:
+            scope_start = period_start(scope)
+            scan_started = datetime.now(timezone.utc)
+            jobs = []
+            plans = {}
+            for target in targets:
+                key = emoji_key(target)
+                entry = (self.cache.get(guild.id) or {}).get(key)
+                if rebuild or not cache_covers(entry, scope_start):
+                    window = scope_start
+                    full = True
+                else:
+                    window = entry["cached_until"] - timedelta(days=OVERLAP_DAYS)
+                    if scope_start is not None and scope_start > window:
+                        window = scope_start
+                    full = False
+                sink: list[dict] = []
+                jobs.append((target, window, sink))
+                plans[key] = (target, window, sink, entry, full)
+            global_after = (None if any(w is None for _, w, _ in jobs)
+                            else min(w for _, w, _ in jobs))
+            scanned = 0
+            channels = 0
+            async for channel in self._targets(guild):
+                channels += 1
+                try:
+                    scanned += await scan_channel_multi(channel, jobs, global_after)
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    LOGGER.info("reaction-rank-cache: #%s を走査できずスキップ: %s",
+                                getattr(channel, "name", channel.id), exc)
+                if channels % 5 == 0:
+                    try:
+                        await interaction.edit_original_response(content=(
+                            f"💾 キャッシュを作成中… {channels}チャンネル・"
+                            f"{scanned}件を走査済み（結果は表示されません）"))
+                    except discord.HTTPException:
+                        pass
+            for key, (target, window, sink, entry, full) in plans.items():
+                if full or entry is None:
+                    merged = sink
+                    coverage = scope_start
+                else:
+                    merged = merge_records(entry["records"], sink, window)
+                    coverage = wider_coverage(entry["coverage_start"], scope_start)
+                self.cache.setdefault(guild.id, {})[key] = {
+                    "emoji": str(target),
+                    "cached_until": scan_started,
+                    "coverage_start": coverage,
+                    "records": merged,
+                }
+            save_cache(self.cache_path, self.cache)
+            emoji_list = " ".join(str(t) for t in targets)
+            try:
+                await interaction.edit_original_response(content=(
+                    f"💾 キャッシュを保存しました（結果は表示していません）。\n"
+                    f"対象：{emoji_list}\n"
+                    f"走査済み：{scan_started.astimezone(JST):%Y/%m/%d %H:%M} 時点まで"))
+            except discord.HTTPException:
+                pass
+        except Exception:
+            LOGGER.exception("reaction-rank-cache: キャッシュ作成に失敗")
+            try:
+                await interaction.edit_original_response(
+                    content="キャッシュ作成中にエラーが起きたため中断しました。")
             except discord.HTTPException:
                 pass
         finally:
@@ -374,6 +671,47 @@ class ReactionRank(commands.Cog):
             f"🔍 {emoji_text} のリアクションを集計中… サーバーの履歴を走査しています")
         asyncio.create_task(self._run_scan(
             guild, status, target, emoji_text, count, scope_label, after, mode))
+
+    @app_commands.command(name="reaction-rank-cache",
+                          description="ランキング用キャッシュだけを作成/更新します（結果は表示しません）")
+    @app_commands.describe(
+        emojis="数える絵文字（空白区切りで複数指定可、最大10個）",
+        scope="対象期間（省略時は全期間）",
+        rebuild="既存キャッシュを破棄して作り直す",
+    )
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="今年", value="year"),
+        app_commands.Choice(name="過去1年", value="past_year"),
+        app_commands.Choice(name="全期間", value="all"),
+    ])
+    @app_commands.guild_only()
+    async def reaction_rank_cache(self, interaction: discord.Interaction,
+                                  emojis: str, scope: str = "all", rebuild: bool = False):
+        guild = interaction.guild
+        if guild.id in self._running:
+            await interaction.response.send_message(
+                "このサーバーでは既に集計が実行中です。終わってからもう一度どうぞ。", ephemeral=True)
+            return
+        targets, invalid = parse_emojis(emojis)
+        if invalid:
+            await interaction.response.send_message(
+                f"読み取れない絵文字がありました：{' '.join(invalid)}。"
+                "絵文字そのもの、または `<:名前:ID>` 形式で指定してください。", ephemeral=True)
+            return
+        if not targets:
+            await interaction.response.send_message(
+                "絵文字が指定されていません。", ephemeral=True)
+            return
+        if len(targets) > MAX_CACHE_EMOJIS:
+            await interaction.response.send_message(
+                f"一度に指定できる絵文字は{MAX_CACHE_EMOJIS}個までです。", ephemeral=True)
+            return
+        self._running.add(guild.id)
+        await interaction.response.defer(ephemeral=True)
+        await interaction.edit_original_response(
+            content="💾 キャッシュの作成を開始します（結果は表示されません）。")
+        asyncio.create_task(self._run_cache_build(
+            interaction, guild, targets, scope, rebuild))
 
 
 async def setup(bot: commands.Bot):
