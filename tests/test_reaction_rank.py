@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from cogs.reaction_rank import (JST, PAGE_SIZE, RankingView, aggregate_users,
-                                emoji_matches, format_pages, format_user_pages,
-                                match_count, parse_emoji, past_year_start,
-                                period_start, rank_records, scan_channel,
-                                year_start)
+                                cache_covers, emoji_key, emoji_matches,
+                                filter_records, format_pages, format_user_pages,
+                                load_cache, match_count, merge_records,
+                                parse_emoji, parse_emojis, past_year_start,
+                                period_start, rank_records, save_cache,
+                                scan_channel, scan_channel_multi, year_start)
 
 
 def fake_message(content="本文", reactions=(), created_at=None, jump_url="https://example.com/m"):
@@ -200,6 +202,106 @@ class ViewTests(unittest.TestCase):
         view._sync_buttons()
         self.assertTrue(view.next_page.disabled)
         self.assertEqual(view.page_label.label, "3 / 3")
+
+
+class CacheHelperTests(unittest.TestCase):
+    def rec(self, mid, count, day):
+        return {"message_id": mid, "count": count,
+                "created_at": datetime(2026, 3, day, tzinfo=timezone.utc)}
+
+    def test_emoji_key(self):
+        self.assertEqual(emoji_key(parse_emoji("⭐")), "unicode:⭐")
+        self.assertEqual(emoji_key(parse_emoji("<:typst:1558680485427679422>")),
+                         "custom:1558680485427679422")
+
+    def test_parse_emojis_multi_dedupe_invalid(self):
+        valid, invalid = parse_emojis("⭐ 🔥,⭐ abc")
+        self.assertEqual([str(e) for e in valid], ["⭐", "🔥"])
+        self.assertEqual(invalid, ["abc"])
+
+    def test_merge_window_replace_and_drop(self):
+        cached = [self.rec(1, 5, 1), self.rec(2, 3, 10), self.rec(3, 9, 20)]
+        fresh = [self.rec(2, 8, 10), self.rec(4, 1, 25)]
+        window = datetime(2026, 3, 5, tzinfo=timezone.utc)
+        merged = merge_records(cached, fresh, window)
+        by_id = {r["message_id"]: r["count"] for r in merged}
+        # 1: 窓より前なので保持 / 2: fresh で置換 / 3: 窓内だが fresh に無いので消去 / 4: 新規
+        self.assertEqual(by_id, {1: 5, 2: 8, 4: 1})
+
+    def test_merge_full_replace(self):
+        merged = merge_records([self.rec(1, 5, 1)], [self.rec(2, 3, 2)], None)
+        self.assertEqual([r["message_id"] for r in merged], [2])
+
+    def test_cache_covers(self):
+        jan1 = datetime(2026, 1, 1, tzinfo=JST)
+        entry_all = {"coverage_start": None}
+        entry_year = {"coverage_start": jan1}
+        self.assertTrue(cache_covers(entry_all, None))
+        self.assertTrue(cache_covers(entry_all, jan1))
+        self.assertTrue(cache_covers(entry_year, jan1))
+        self.assertFalse(cache_covers(entry_year, None))
+        self.assertFalse(cache_covers(entry_year, datetime(2025, 6, 1, tzinfo=JST)))
+        self.assertFalse(cache_covers(None, jan1))
+
+    def test_filter_records(self):
+        records = [self.rec(1, 5, 1), self.rec(2, 3, 10)]
+        start = datetime(2026, 3, 5, tzinfo=timezone.utc)
+        self.assertEqual([r["message_id"] for r in filter_records(records, start)], [2])
+        self.assertEqual(len(filter_records(records, None)), 2)
+
+    def test_save_load_roundtrip(self):
+        import tempfile
+        from pathlib import Path as P
+        record = user_record("alice", 1, 5, 10)
+        record["message_id"] = 111
+        record["channel_id"] = 222
+        cache = {42: {"unicode:⭐": {
+            "emoji": "⭐",
+            "cached_until": datetime(2026, 11, 22, 12, 0, tzinfo=timezone.utc),
+            "coverage_start": None,
+            "records": [record]}}}
+        with tempfile.TemporaryDirectory() as d:
+            path = P(d) / "cache.json"
+            save_cache(path, cache)
+            loaded = load_cache(path)
+        entry = loaded[42]["unicode:⭐"]
+        self.assertIsNone(entry["coverage_start"])
+        self.assertEqual(entry["records"][0]["count"], 5)
+        self.assertEqual(entry["records"][0]["created_at"], record["created_at"])
+        self.assertEqual(entry["records"][0]["message_id"], 111)
+
+    def test_load_cache_missing_file(self):
+        self.assertEqual(load_cache("/nonexistent-dir/cache.json"), {})
+
+    def test_format_note(self):
+        pages = format_pages("⭐", [], "過去1年", 10, 2, note="キャッシュ併用：テスト")
+        self.assertIn("キャッシュ併用：テスト", pages[0])
+
+
+class ScanMultiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_multi_targets_and_window(self):
+        star = parse_emoji("⭐")
+        fire = parse_emoji("🔥")
+        old = fake_message(
+            reactions=[SimpleNamespace(emoji="⭐", count=2),
+                       SimpleNamespace(emoji="🔥", count=3)],
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        new = fake_message(
+            reactions=[SimpleNamespace(emoji="⭐", count=5)],
+            created_at=datetime(2026, 3, 1, tzinfo=timezone.utc))
+
+        async def history(limit=None, after=None):
+            for m in (old, new):
+                yield m
+
+        channel = SimpleNamespace(history=history)
+        star_sink, fire_sink = [], []
+        jobs = [(star, None, star_sink),
+                (fire, datetime(2026, 2, 1, tzinfo=timezone.utc), fire_sink)]
+        scanned = await scan_channel_multi(channel, jobs, None)
+        self.assertEqual(scanned, 2)
+        self.assertEqual([r["count"] for r in star_sink], [2, 5])
+        self.assertEqual(fire_sink, [])  # 🔥 のヒットは窓（2/1）より前なので対象外
 
 
 class ScanTests(unittest.IsolatedAsyncioTestCase):
