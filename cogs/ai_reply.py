@@ -431,6 +431,10 @@ class AIReply(commands.Cog):
                     and message.reference is None):
                 await self._safe_reply(message, DEEP_EMPTY_TEXT)
                 return
+        if not deep:
+            tokuhen = self.bot.get_cog("Tokuhen")   # 前期特編の時間割はAIを使わず即答する（利用回数にも数えない）
+            if tokuhen is not None and await tokuhen.try_handle(message, question):
+                return
         if not self.api_key:
             await self._safe_reply(message, NO_KEY_TEXT)
             return
