@@ -56,6 +56,9 @@ class ParseDateTests(unittest.TestCase):
     def test_month_day_and_year_resolution(self):
         self.assertEqual(self.parse("12月3日の時間割"), date(2026, 12, 3))
         self.assertEqual(self.parse("1月18日の時間割"), date(2027, 1, 18))
+        self.assertEqual(self.parse("12/3の時間割は？"), date(2026, 12, 3))
+        self.assertEqual(self.parse("1/18の時間割"), date(2027, 1, 18))
+        self.assertEqual(self.parse("12/3"), date(2026, 12, 3))
         self.assertEqual(self.parse("2026-12-03"), date(2026, 12, 3))
         self.assertEqual(self.parse("December 3"), date(2026, 12, 3))
         self.assertEqual(self.parse("3 December"), date(2026, 12, 3))
