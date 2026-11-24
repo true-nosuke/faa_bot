@@ -1,0 +1,480 @@
+{
+  "title": {
+    "ja": "前期特編 時間割",
+    "en": "Tokuhen Timetable"
+  },
+  "updated": "2026-11-23",
+  "term": {
+    "start": "2026-11-30",
+    "end": "2027-01-15"
+  },
+  "columns": [
+    {"room": "231", "class": "1", "division": "a"},
+    {"room": "233", "class": "2", "division": "b"},
+    {"room": "234", "class": "3", "division": "c"},
+    {"room": "245", "class": "4", "division": "o"},
+    {"room": "244", "class": "5", "division": "n"},
+    {"room": "243", "class": "6", "division": "m"},
+    {"room": "242", "class": "7", "division": "l"},
+    {"room": "241", "class": "8", "division": "k"}
+  ],
+  "classes": ["1", "2", "3", "4", "5", "6", "7", "8"],
+  "divisions": ["a", "b", "c", "k", "l", "m", "n", "o"],
+  "electives": {
+    "soc-abn": ["geo", "jh", "wh", "pol"],
+    "soc-bckl": ["geo", "jh", "wh", "pol"],
+    "geo-pol": ["geo", "pol"],
+    "sci-ab": ["chem-b", "bio-b", "earth-b"],
+    "sci-bc": ["bio-b", "earth-b"]
+  },
+  "dayTypes": {
+    "a": {
+      "ja": "午前特",
+      "en": "AM-toku"
+    },
+    "p": {
+      "ja": "午後特",
+      "en": "PM-toku"
+    }
+  },
+  "bells": {
+    "normal": null,
+    "a": null,
+    "p": null
+  },
+  "events": {
+    "kpack": {
+      "ja": "河合塾 Kパック模試",
+      "en": "Kawaijuku K-pack mock exam",
+      "note": {"ja": "8:40から始めます。共通テストで持ち込める時計を持参すること（教室の時計は外します）。詳細は後日提示。", "en": "Starts at 8:40. Bring a watch allowed in the Common Test (classroom clocks will be removed). Details will be announced later."}
+    },
+    "kyotsu1": {
+      "ja": "共通テスト 第1日目",
+      "en": "Common Test, day 1",
+      "note": {"ja": "健闘を祈る", "en": "Good luck!"}
+    },
+    "kyotsu2": {
+      "ja": "共通テスト 第2日目",
+      "en": "Common Test, day 2",
+      "note": {"ja": "最後まで頑張れ", "en": "Keep going to the very end."}
+    },
+    "scoring": {
+      "ja": "自己採点・リサーチ提出",
+      "en": "Self-scoring and research submission",
+      "note": {"ja": "8:40〜。遅刻しないこと（遅刻者を待たずに始めるので、指示が後回しになります）。持参物：共通テストの全問題冊子、スマホ・タブレット等の通信端末、筆記具。「自己採点集計」の事前登録を済ませておくこと。", "en": "From 8:40. Do not be late (we will not wait, so late students get instructions afterwards). Bring: all Common Test question booklets, a phone or tablet, and writing tools. Finish the advance registration for self-scoring in advance."}
+    }
+  },
+  "subjects": {
+    "ja": {
+      "ja": "国語",
+      "en": "Japanese",
+      "short": {"ja": "国", "en": "Ja"},
+      "group": "kokugo"
+    },
+    "m1": {
+      "ja": "数学①",
+      "en": "Math ①",
+      "short": {"ja": "数①", "en": "M①"},
+      "group": "math"
+    },
+    "m2": {
+      "ja": "数学②",
+      "en": "Math ②",
+      "short": {"ja": "数②", "en": "M②"},
+      "group": "math"
+    },
+    "en": {
+      "ja": "英語",
+      "en": "English",
+      "short": {"ja": "英", "en": "En"},
+      "group": "english"
+    },
+    "soc-abn": {
+      "ja": "社会ABN",
+      "en": "Social Studies ABN",
+      "abbr": {"en": "Soc. ABN"},
+      "short": {"ja": "社", "en": "Soc"},
+      "group": "social",
+      "combined": true,
+      "detail": {"ja": "地理・日本史・世界史・政経", "en": "Geo, JH, WH, P&E"}
+    },
+    "soc-bckl": {
+      "ja": "社会BCKL",
+      "en": "Social Studies BCKL",
+      "abbr": {"en": "Soc. BCKL"},
+      "short": {"ja": "社", "en": "Soc"},
+      "group": "social",
+      "combined": true,
+      "detail": {"ja": "地理・日本史・世界史・政経", "en": "Geo, JH, WH, P&E"}
+    },
+    "geo-pol": {
+      "ja": "地理／政経",
+      "en": "Geography / Politics & Economics",
+      "abbr": {"en": "Geo. / P&E"},
+      "short": {"ja": "地政", "en": "G/P"},
+      "group": "social",
+      "combined": true,
+      "detail": {"ja": "地理・政経", "en": "Geo, P&E"}
+    },
+    "jh": {
+      "ja": "日本史",
+      "en": "Japanese History",
+      "abbr": {"en": "Jpn. History"},
+      "short": {"ja": "日", "en": "JH"},
+      "group": "social"
+    },
+    "geo": {
+      "ja": "地理",
+      "en": "Geography",
+      "short": {"ja": "地", "en": "Geo"},
+      "group": "social"
+    },
+    "wh": {
+      "ja": "世界史",
+      "en": "World History",
+      "short": {"ja": "世", "en": "WH"},
+      "group": "social"
+    },
+    "pol": {
+      "ja": "政経",
+      "en": "Politics & Economics",
+      "abbr": {"en": "Pol. & Econ."},
+      "short": {"ja": "政", "en": "P&E"},
+      "group": "social"
+    },
+    "sci-ab": {
+      "ja": "理科基礎AB",
+      "en": "Basic Science AB",
+      "abbr": {"en": "Sci. AB"},
+      "short": {"ja": "理基", "en": "Sci"},
+      "group": "science",
+      "combined": true,
+      "detail": {"ja": "化・生・地", "en": "Chem, Bio, Earth"}
+    },
+    "sci-bc": {
+      "ja": "理科基礎BC",
+      "en": "Basic Science BC",
+      "abbr": {"en": "Sci. BC"},
+      "short": {"ja": "理基", "en": "Sci"},
+      "group": "science",
+      "combined": true,
+      "detail": {"ja": "生・地", "en": "Bio, Earth"}
+    },
+    "chem-b": {
+      "ja": "化学基礎",
+      "en": "Basic Chemistry",
+      "abbr": {"en": "Basic Chem."},
+      "short": {"ja": "化基", "en": "ChB"},
+      "group": "science"
+    },
+    "bio-b": {
+      "ja": "生物基礎",
+      "en": "Basic Biology",
+      "abbr": {"en": "Basic Bio."},
+      "short": {"ja": "生基", "en": "BiB"},
+      "group": "science"
+    },
+    "earth-b": {
+      "ja": "地学基礎",
+      "en": "Basic Earth Science",
+      "abbr": {"en": "Basic Earth"},
+      "short": {"ja": "地基", "en": "EaB"},
+      "group": "science"
+    },
+    "phys": {
+      "ja": "物理",
+      "en": "Physics",
+      "short": {"ja": "物", "en": "Ph"},
+      "group": "science"
+    },
+    "chem": {
+      "ja": "化学",
+      "en": "Chemistry",
+      "short": {"ja": "化", "en": "Ch"},
+      "group": "science"
+    },
+    "bio": {
+      "ja": "生物",
+      "en": "Biology",
+      "short": {"ja": "生", "en": "Bio"},
+      "group": "science"
+    },
+    "info": {
+      "ja": "情報",
+      "en": "Information",
+      "abbr": {"en": "Info."},
+      "short": {"ja": "情", "en": "Inf"},
+      "group": "info"
+    },
+    "pe-amo": {
+      "ja": "体育AMO",
+      "en": "P.E. AMO",
+      "short": {"ja": "体", "en": "PE"},
+      "group": "pe",
+      "combined": true
+    },
+    "pe-bl": {
+      "ja": "体育BL",
+      "en": "P.E. BL",
+      "short": {"ja": "体", "en": "PE"},
+      "group": "pe",
+      "combined": true
+    },
+    "pe-ckn": {
+      "ja": "体育CKN",
+      "en": "P.E. CKN",
+      "short": {"ja": "体", "en": "PE"},
+      "group": "pe",
+      "combined": true
+    },
+    "lhr": {
+      "ja": "LHR",
+      "en": "LHR",
+      "short": {"ja": "LHR", "en": "LHR"},
+      "group": "other"
+    },
+    "jishu": {
+      "ja": "自習",
+      "en": "Self-study",
+      "short": {"ja": "自", "en": "SS"},
+      "group": "other"
+    }
+  },
+  "days": {
+    "2026-11-30": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "en", "4": "en", "5": "en", "6": "m1", "7": "m1", "8": "m1"}},
+        {"periods": [4], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "phys", "l": "phys", "m": "chem", "n": "soc-abn", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "m1", "2": "m1", "3": "m1", "4": "ja", "5": "ja", "6": "en", "7": "en", "8": "en"}}
+      ]
+    },
+    "2026-12-01": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "chem", "l": "chem", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m1", "5": "m1", "6": "m2", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "pe-amo", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "pe-amo", "n": "bio", "o": "pe-amo"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "m2", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}}
+      ]
+    },
+    "2026-12-02": {
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "m2", "2": "m1", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [3], "by": "division", "cells": {"a": "info", "b": "info", "c": "pe-ckn", "k": "pe-ckn", "l": "info", "m": "geo", "n": "pe-ckn", "o": "phys"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "phys", "l": "phys", "m": "chem", "n": "info", "o": "info"}},
+        {"periods": [5], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "chem", "l": "chem", "m": "phys", "n": "soc-abn", "o": "chem"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "pe-bl", "c": "info", "k": "info", "l": "pe-bl", "m": "info", "n": "bio", "o": "geo-pol"}}
+      ]
+    },
+    "2026-12-03": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jishu", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m1", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "jishu", "c": "geo", "k": "phys", "l": "phys", "m": "chem", "n": "bio", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "m1", "4": "en", "5": "en", "6": "en", "7": "m1", "8": "m1"}}
+      ]
+    },
+    "2026-12-04": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "info", "k": "info", "l": "phys", "m": "info", "n": "soc-abn", "o": "chem"}},
+        {"periods": [2], "by": "division", "cells": {"a": "info", "b": "info", "c": "jishu", "k": "phys", "l": "info", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [3], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "info", "o": "info"}},
+        {"periods": [4, 5], "by": "class", "cells": {"1": "m1", "2": "ja", "3": "ja", "4": "m1", "5": "m1", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "chem", "n": "bio", "o": "phys"}}
+      ]
+    },
+    "2026-12-07": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m2", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "phys", "l": "phys", "m": "chem", "n": "soc-abn", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}}
+      ]
+    },
+    "2026-12-08": {
+      "type": "a",
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "m2", "2": "m2", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [3], "by": "class", "cells": {"1": "lhr", "2": "lhr", "3": "lhr", "4": "lhr", "5": "lhr", "6": "lhr", "7": "lhr", "8": "lhr"}},
+        {"periods": [4], "by": "division", "cells": {"a": "pe-amo", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "pe-amo", "n": "bio", "o": "pe-amo"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m1", "5": "m1", "6": "m1", "7": "ja", "8": "ja"}}
+      ]
+    },
+    "2026-12-09": {
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "ja", "2": "en", "3": "ja", "4": "en", "5": "en", "6": "ja", "7": "m1", "8": "m1"}},
+        {"periods": [3], "by": "division", "cells": {"a": "info", "b": "info", "c": "pe-ckn", "k": "pe-ckn", "l": "info", "m": "geo", "n": "pe-ckn", "o": "phys"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "phys", "l": "phys", "m": "chem", "n": "info", "o": "info"}},
+        {"periods": [5], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "chem", "l": "chem", "m": "phys", "n": "soc-abn", "o": "chem"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "pe-bl", "c": "info", "k": "info", "l": "pe-bl", "m": "info", "n": "bio", "o": "geo-pol"}}
+      ]
+    },
+    "2026-12-10": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jishu", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "m1", "2": "m1", "3": "m1", "4": "ja", "5": "ja", "6": "en", "7": "en", "8": "en"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "jishu", "c": "geo", "k": "phys", "l": "phys", "m": "chem", "n": "bio", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m2", "7": "ja", "8": "ja"}}
+      ]
+    },
+    "2026-12-11": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "info", "k": "info", "l": "phys", "m": "info", "n": "soc-abn", "o": "chem"}},
+        {"periods": [2], "by": "division", "cells": {"a": "info", "b": "info", "c": "jishu", "k": "phys", "l": "info", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [3], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "info", "o": "info"}},
+        {"periods": [4, 5], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "chem", "n": "bio", "o": "phys"}}
+      ]
+    },
+    "2026-12-14": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "m2", "2": "m2", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [4], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "phys", "l": "phys", "m": "chem", "n": "soc-abn", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m1", "5": "m1", "6": "m1", "7": "ja", "8": "ja"}}
+      ]
+    },
+    "2026-12-15": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "chem", "l": "chem", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m1", "8": "m1"}},
+        {"periods": [4], "by": "division", "cells": {"a": "pe-amo", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "pe-amo", "n": "bio", "o": "pe-amo"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "m1", "2": "m1", "3": "m1", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}}
+      ]
+    },
+    "2026-12-16": {
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m2", "7": "ja", "8": "ja"}},
+        {"periods": [3], "by": "division", "cells": {"a": "info", "b": "info", "c": "pe-ckn", "k": "pe-ckn", "l": "info", "m": "geo", "n": "pe-ckn", "o": "phys"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "phys", "l": "phys", "m": "chem", "n": "info", "o": "info"}},
+        {"periods": [5], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "chem", "l": "chem", "m": "phys", "n": "soc-abn", "o": "chem"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "pe-bl", "c": "info", "k": "info", "l": "pe-bl", "m": "info", "n": "bio", "o": "geo-pol"}}
+      ]
+    },
+    "2026-12-17": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jishu", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "m2", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "jishu", "c": "geo", "k": "phys", "l": "phys", "m": "chem", "n": "bio", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "en", "2": "m2", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}}
+      ]
+    },
+    "2026-12-18": {
+      "type": "p",
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "info", "k": "info", "l": "phys", "m": "info", "n": "soc-abn", "o": "chem"}},
+        {"periods": [2], "by": "division", "cells": {"a": "info", "b": "info", "c": "jishu", "k": "phys", "l": "info", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [3], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "info", "o": "info"}},
+        {"periods": [4, 5], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m1", "5": "m1", "6": "m1", "7": "ja", "8": "ja"}},
+        {"periods": [6], "by": "class", "cells": {"1": "lhr", "2": "lhr", "3": "lhr", "4": "lhr", "5": "lhr", "6": "lhr", "7": "lhr", "8": "lhr"}}
+      ]
+    },
+    "2026-12-21": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m1", "8": "m1"}},
+        {"periods": [4], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "phys", "l": "phys", "m": "chem", "n": "soc-abn", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "m1", "2": "m1", "3": "m1", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}}
+      ]
+    },
+    "2026-12-22": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "chem", "l": "chem", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m2", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "pe-amo", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "pe-amo", "n": "bio", "o": "pe-amo"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}}
+      ]
+    },
+    "2026-12-23": {
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "m2", "2": "m2", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [3], "by": "division", "cells": {"a": "info", "b": "info", "c": "pe-ckn", "k": "pe-ckn", "l": "info", "m": "geo", "n": "pe-ckn", "o": "phys"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "phys", "l": "phys", "m": "chem", "n": "info", "o": "info"}},
+        {"periods": [5], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "chem", "l": "chem", "m": "phys", "n": "soc-abn", "o": "chem"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "pe-bl", "c": "info", "k": "info", "l": "pe-bl", "m": "info", "n": "bio", "o": "geo-pol"}}
+      ]
+    },
+    "2026-12-24": {
+      "type": "a",
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m1", "5": "m1", "6": "m1", "7": "ja", "8": "ja"}},
+        {"periods": [3], "by": "class", "cells": {"1": "lhr", "2": "lhr", "3": "lhr", "4": "lhr", "5": "lhr", "6": "lhr", "7": "lhr", "8": "lhr"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "jishu", "c": "geo", "k": "phys", "l": "phys", "m": "chem", "n": "bio", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m1", "8": "m1"}}
+      ]
+    },
+    "2026-12-25": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "info", "k": "info", "l": "phys", "m": "info", "n": "soc-abn", "o": "chem"}},
+        {"periods": [2], "by": "division", "cells": {"a": "info", "b": "info", "c": "jishu", "k": "phys", "l": "info", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [3], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "info", "o": "info"}},
+        {"periods": [4, 5], "by": "class", "cells": {"1": "m1", "2": "m1", "3": "m1", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "chem", "n": "bio", "o": "phys"}}
+      ]
+    },
+    "2027-01-05": {
+      "event": "kpack"
+    },
+    "2027-01-06": {
+      "event": "kpack"
+    },
+    "2027-01-07": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jishu", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m2", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "jishu", "c": "geo", "k": "phys", "l": "phys", "m": "chem", "n": "bio", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}}
+      ]
+    },
+    "2027-01-08": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "info", "k": "info", "l": "phys", "m": "info", "n": "soc-abn", "o": "chem"}},
+        {"periods": [2], "by": "division", "cells": {"a": "info", "b": "info", "c": "jishu", "k": "phys", "l": "info", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [3], "by": "division", "cells": {"a": "sci-ab", "b": "sci-ab", "c": "geo", "k": "chem", "l": "chem", "m": "phys", "n": "info", "o": "info"}},
+        {"periods": [4, 5], "by": "class", "cells": {"1": "m2", "2": "m2", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "chem", "n": "bio", "o": "phys"}}
+      ]
+    },
+    "2027-01-12": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "chem", "l": "chem", "m": "geo", "n": "chem", "o": "geo-pol"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m1", "5": "m1", "6": "m1", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jishu", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "phys", "n": "bio", "o": "phys"}, "changed": ["a", "m", "o"]},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m1", "8": "m1"}}
+      ]
+    },
+    "2027-01-13": {
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "m1", "2": "m1", "3": "m1", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [3], "by": "division", "cells": {"a": "info", "b": "info", "c": "jishu", "k": "chem", "l": "info", "m": "geo", "n": "chem", "o": "phys"}, "changed": ["c", "k", "n"]},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "sci-bc", "c": "sci-bc", "k": "phys", "l": "phys", "m": "chem", "n": "info", "o": "info"}},
+        {"periods": [5], "by": "division", "cells": {"a": "soc-abn", "b": "soc-abn", "c": "bio-b", "k": "chem", "l": "chem", "m": "phys", "n": "soc-abn", "o": "phys"}, "changed": ["o"]},
+        {"periods": [6], "by": "division", "cells": {"a": "earth-b", "b": "jishu", "c": "info", "k": "info", "l": "chem", "m": "info", "n": "bio", "o": "geo-pol"}, "changed": ["b", "l"]}
+      ]
+    },
+    "2027-01-14": {
+      "slots": [
+        {"periods": [1], "by": "division", "cells": {"a": "jishu", "b": "soc-bckl", "c": "soc-bckl", "k": "soc-bckl", "l": "soc-bckl", "m": "phys", "n": "chem", "o": "phys"}},
+        {"periods": [2, 3], "by": "class", "cells": {"1": "en", "2": "en", "3": "en", "4": "m2", "5": "m2", "6": "m2", "7": "ja", "8": "ja"}},
+        {"periods": [4], "by": "division", "cells": {"a": "jh", "b": "jishu", "c": "geo", "k": "phys", "l": "phys", "m": "chem", "n": "bio", "o": "chem"}},
+        {"periods": [5, 6], "by": "class", "cells": {"1": "ja", "2": "ja", "3": "ja", "4": "en", "5": "en", "6": "en", "7": "m2", "8": "m2"}}
+      ]
+    },
+    "2027-01-15": {
+      "type": "a",
+      "slots": [
+        {"periods": [1, 2], "by": "class", "cells": {"1": "m2", "2": "m2", "3": "m2", "4": "ja", "5": "ja", "6": "ja", "7": "en", "8": "en"}},
+        {"periods": [3], "by": "class", "cells": {"1": "lhr", "2": "lhr", "3": "lhr", "4": "lhr", "5": "lhr", "6": "lhr", "7": "lhr", "8": "lhr"}}
+      ]
+    },
+    "2027-01-16": {
+      "event": "kyotsu1"
+    },
+    "2027-01-17": {
+      "event": "kyotsu2"
+    },
+    "2027-01-18": {
+      "event": "scoring"
+    }
+  }
+}
