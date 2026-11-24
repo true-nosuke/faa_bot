@@ -176,7 +176,7 @@ def parse_date(text: str, today: date,
         found = _resolve_year(int(m.group(1)), int(m.group(2)), today, start, end)
         if found:
             return found
-    m = re.search(r"\b(\d{1,2})/(\d{1,2})\b", text)
+    m = re.search(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?!\d)", text)
     if m:
         found = _resolve_year(int(m.group(1)), int(m.group(2)), today, start, end)
         if found:
