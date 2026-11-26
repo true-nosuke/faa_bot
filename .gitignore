@@ -2,16 +2,13 @@
 .env.*
 !.env.example
 
-
 /.venv/
 /backups/
 /m45_cache/
 /out/
 
-
 __pycache__/
 *.py[cod]
-
 
 bot.db
 *.db
@@ -24,7 +21,6 @@ manual_dm_persons.json
 status_state.json
 countdown_state.json
 emoji_map.json
-
 
 *.part
 .pytest_cache/
