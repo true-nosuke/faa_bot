@@ -118,6 +118,57 @@ def aggregate_users(records: list[dict], limit: int) -> list[dict]:
     return ranked[:limit]
 
 
+def reaction_key(emoji) -> str:
+    """リアクションの絵文字をキャッシュと同じキー形式にする。
+
+    Unicode 絵文字は文字列そのもの、カスタム絵文字は ID で識別する。
+    """
+    if isinstance(emoji, str):
+        return f"unicode:{emoji}"
+    return f"custom:{emoji.id}"
+
+
+def make_emoji_records(message) -> list[dict]:
+    """メッセージに付いた全リアクションを、絵文字ごとのレコードにする。"""
+    records = []
+    for reaction in getattr(message, "reactions", None) or []:
+        if reaction.count <= 0:
+            continue
+        emoji = reaction.emoji
+        record = make_record(message, reaction.count)
+        record["emoji"] = str(emoji)
+        record["emoji_key"] = reaction_key(emoji)
+        record["emoji_id"] = getattr(emoji, "id", None)
+        record["emoji_name"] = (emoji if isinstance(emoji, str)
+                                else getattr(emoji, "name", None))
+        record["emoji_animated"] = bool(getattr(emoji, "animated", False))
+        records.append(record)
+    return records
+
+
+def aggregate_emojis(records: list[dict], limit: int) -> list[dict]:
+    """絵文字ごとに累計を集計する（Bot の投稿に付いた分も含む）。
+
+    各絵文字は {emoji, total, messages, best, first_at}。
+    並びは累計の多い順、同数は最初にヒットした投稿が古い順。
+    """
+    emojis: dict = {}
+    for r in records:
+        e = emojis.get(r["emoji_key"])
+        if e is None:
+            e = emojis[r["emoji_key"]] = {"emoji": r["emoji"], "total": 0,
+                                          "messages": 0, "best": r,
+                                          "first_at": r["created_at"]}
+        e["total"] += r["count"]
+        e["messages"] += 1
+        if r["count"] > e["best"]["count"]:
+            e["best"] = r
+        if r["created_at"] < e["first_at"]:
+            e["first_at"] = r["created_at"]
+    ranked = sorted(emojis.values(), key=lambda e: (-e["total"], e["first_at"]))
+    return ranked[:limit]
+
+
 def make_record(message, count: int) -> dict:
     content = " ".join((message.content or "").split())
     if len(content) > SNIPPET_LEN:
@@ -324,6 +375,27 @@ def format_user_pages(emoji_text: str, users: list[dict], scope_label: str,
                      "対象のリアクションを得たユーザーはいなかったよ。")
 
 
+def format_emoji_entry(rank: int, item: dict) -> str:
+    """絵文字別ランキングの1件分の Markdown ブロック。"""
+    best = item["best"]
+    date = best["created_at"].astimezone(JST).strftime("%Y/%m/%d")
+    return (f"### {rank}位　{item['emoji']}×{item['total']}\n"
+            f"対象メッセージ{item['messages']}件\n"
+            f"> {best['snippet']}\n"
+            f"最多のメッセージ：{item['emoji']}×{best['count']} ・ {best['author']} ・ "
+            f"#{best['channel']} ・ {date} ・ [メッセージへ]({best['url']})")
+
+
+def format_emoji_pages(items: list[dict], scope_label: str,
+                       scanned: int, channels: int) -> list[str]:
+    """絵文字別（累計）ランキングを Markdown 整形したページのリストにする。"""
+    header = (f"## リアクション 絵文字ランキング（{scope_label}）\n"
+              f"走査：{channels}チャンネル・スレッド／{scanned}件のメッセージ")
+    entries = [format_emoji_entry(i, e) for i, e in enumerate(items, 1)]
+    return _paginate(header, entries,
+                     "リアクションが付いたメッセージは見つからなかったよ。")
+
+
 class RankingView(discord.ui.View):
     """ランキングのページ切り替えボタン。誰でも押せる。"""
 
@@ -396,6 +468,16 @@ async def scan_channel_multi(channel, jobs: list, after: datetime | None) -> int
             count = match_count(message, target)
             if count > 0:
                 sink.append(make_record(message, count))
+    return scanned
+
+
+async def scan_channel_emojis(channel, after: datetime | None,
+                              records: list[dict]) -> int:
+    """1チャンネル（またはスレッド）を走査し、全絵文字のヒットを records に追加。"""
+    scanned = 0
+    async for message in channel.history(limit=None, after=after):
+        scanned += 1
+        records.extend(make_emoji_records(message))
     return scanned
 
 
@@ -546,6 +628,63 @@ class ReactionRank(commands.Cog):
         finally:
             self._running.discard(guild.id)
 
+    async def _run_emoji_scan(self, guild: discord.Guild, status: discord.Message,
+                              limit: int, scope_label: str, after: datetime | None):
+        """絵文字別（累計）モード。全絵文字を対象にフル走査する。
+
+        キャッシュは使わない（全絵文字の完全な集計にはフル走査が要る）が、
+        走査結果は見つかった全絵文字ぶんのキャッシュとして保存する。
+        """
+        records: list[dict] = []
+        scanned = 0
+        channels = 0
+        scan_started = datetime.now(timezone.utc)
+        try:
+            async for channel in self._targets(guild):
+                channels += 1
+                try:
+                    scanned += await scan_channel_emojis(channel, after, records)
+                except (discord.Forbidden, discord.HTTPException) as exc:
+                    LOGGER.info("reaction-rank: #%s を走査できずスキップ: %s",
+                                getattr(channel, "name", channel.id), exc)
+                if channels % 5 == 0:
+                    try:
+                        await status.edit(content=(
+                            "🔍 リアクションの絵文字を集計中… "
+                            f"{channels}チャンネル・{scanned}件を走査済み"))
+                    except discord.HTTPException:
+                        pass
+            pages = format_emoji_pages(aggregate_emojis(records, limit),
+                                       scope_label, scanned, channels)
+            if len(pages) > 1:
+                view = RankingView(pages)
+                await status.edit(content=pages[0], view=view)
+                view.message = status
+            else:
+                await status.edit(content=pages[0])
+            by_key: dict = {}
+            for r in records:
+                stored = {k: v for k, v in r.items() if not k.startswith("emoji")}
+                by_key.setdefault(r["emoji_key"], (r["emoji"], []))[1].append(stored)
+            if by_key:
+                per_guild = self.cache.setdefault(guild.id, {})
+                for key, (emoji_text, group) in by_key.items():
+                    per_guild[key] = {
+                        "emoji": emoji_text,
+                        "cached_until": scan_started,
+                        "coverage_start": after,
+                        "records": group,
+                    }
+                save_cache(self.cache_path, self.cache)
+        except Exception:
+            LOGGER.exception("reaction-rank: 絵文字別集計に失敗")
+            try:
+                await status.edit(content="集計中にエラーが起きたため中断しました。")
+            except discord.HTTPException:
+                pass
+        finally:
+            self._running.discard(guild.id)
+
     async def _run_cache_build(self, interaction: discord.Interaction,
                                guild: discord.Guild,
                                targets: list[discord.PartialEmoji],
@@ -621,9 +760,9 @@ class ReactionRank(commands.Cog):
             self._running.discard(guild.id)
 
     @app_commands.command(name="reaction-rank",
-                          description="指定した絵文字のリアクションが多いメッセージを表示（サーバー全走査）")
+                          description="リアクションランキングを表示（メッセージ別／ユーザー別／絵文字別、サーバー全走査）")
     @app_commands.describe(
-        emoji="数える絵文字（Unicode絵文字 or カスタム絵文字）",
+        emoji="数える絵文字（Unicode絵文字 or カスタム絵文字。絵文字別モードでは不要）",
         count="表示する件数（1〜25、省略時は10）",
         scope="対象期間（省略時は今年）",
         mode="集計単位（省略時はメッセージ別）",
@@ -636,22 +775,30 @@ class ReactionRank(commands.Cog):
     @app_commands.choices(mode=[
         app_commands.Choice(name="メッセージ別", value="message"),
         app_commands.Choice(name="ユーザー別（累計）", value="user"),
+        app_commands.Choice(name="絵文字別（累計）", value="emoji"),
     ])
     @app_commands.guild_only()
     async def reaction_rank(self, interaction: discord.Interaction,
-                            emoji: str, count: int = DEFAULT_COUNT, scope: str = "year",
-                            mode: str = "message"):
+                            emoji: str = None, count: int = DEFAULT_COUNT,
+                            scope: str = "year", mode: str = "message"):
         guild = interaction.guild
         if guild.id in self._running:
             await interaction.response.send_message(
                 "このサーバーでは既に集計が実行中です。終わってからもう一度どうぞ。", ephemeral=True)
             return
-        target = parse_emoji(emoji)
-        if target is None:
-            await interaction.response.send_message(
-                "絵文字を読み取れませんでした。絵文字そのもの、または `<:名前:ID>` 形式で指定してください。",
-                ephemeral=True)
-            return
+        target = None
+        if mode != "emoji":
+            if not emoji:
+                await interaction.response.send_message(
+                    "絵文字別モード以外では、emoji に数える絵文字を指定してください。",
+                    ephemeral=True)
+                return
+            target = parse_emoji(emoji)
+            if target is None:
+                await interaction.response.send_message(
+                    "絵文字を読み取れませんでした。絵文字そのもの、または `<:名前:ID>` 形式で指定してください。",
+                    ephemeral=True)
+                return
         if not 1 <= count <= MAX_COUNT:
             await interaction.response.send_message(
                 f"件数は1〜{MAX_COUNT}で指定してください。", ephemeral=True)
@@ -664,6 +811,15 @@ class ReactionRank(commands.Cog):
             scope_label = f"{after.year}年"
         else:
             scope_label = "全期間"
+        if mode == "emoji":
+            await interaction.response.send_message(
+                f"リアクションの絵文字別ランキングの集計を開始します（{scope_label}）。"
+                "結果はこのチャンネルに出します。", ephemeral=True)
+            status = await interaction.channel.send(
+                "🔍 リアクションの絵文字を集計中… サーバーの履歴を走査しています")
+            asyncio.create_task(self._run_emoji_scan(
+                guild, status, count, scope_label, after))
+            return
         emoji_text = str(target)
         await interaction.response.send_message(
             f"{emoji_text} の集計を開始します（{scope_label}）。結果はこのチャンネルに出します。", ephemeral=True)
