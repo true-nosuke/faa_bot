@@ -8,13 +8,15 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cogs.reaction_rank import (JST, PAGE_SIZE, RankingView, aggregate_users,
-                                cache_covers, emoji_key, emoji_matches,
-                                filter_records, format_pages, format_user_pages,
-                                load_cache, match_count, merge_records,
+from cogs.reaction_rank import (JST, PAGE_SIZE, RankingView, aggregate_emojis,
+                                aggregate_users, cache_covers, emoji_key,
+                                emoji_matches, filter_records, format_emoji_pages,
+                                format_pages, format_user_pages, load_cache,
+                                make_emoji_records, match_count, merge_records,
                                 parse_emoji, parse_emojis, past_year_start,
-                                period_start, rank_records, save_cache,
-                                scan_channel, scan_channel_multi, year_start)
+                                period_start, rank_records, reaction_key,
+                                save_cache, scan_channel, scan_channel_emojis,
+                                scan_channel_multi, year_start)
 
 
 def fake_message(content="本文", reactions=(), created_at=None, jump_url="https://example.com/m"):
@@ -326,6 +328,108 @@ class ScanTests(unittest.IsolatedAsyncioTestCase):
         view = RankingView(["p1", "p2"])
         await view.on_timeout()
         self.assertTrue(all(c.disabled for c in view.children))
+
+
+def emoji_record(emoji, key, count, day, author="alice", snippet="投稿", bot=False):
+    return {"count": count,
+            "created_at": datetime(2026, 1, day, tzinfo=timezone.utc),
+            "author": author, "author_id": 1, "author_bot": bot,
+            "channel": "general", "snippet": snippet,
+            "url": "https://example.com/m",
+            "emoji": emoji, "emoji_key": key}
+
+
+class EmojiModeTests(unittest.TestCase):
+    def test_reaction_key(self):
+        self.assertEqual(reaction_key("🔥"), "unicode:🔥")
+        custom = parse_emoji("<:party:123456789012345678>")
+        self.assertEqual(reaction_key(custom), "custom:123456789012345678")
+
+    def test_make_emoji_records(self):
+        msg = fake_message(reactions=[
+            SimpleNamespace(emoji="🔥", count=3),
+            SimpleNamespace(emoji="⭐", count=7),
+            SimpleNamespace(emoji=parse_emoji("<:party:123456789012345678>"), count=2),
+        ])
+        records = make_emoji_records(msg)
+        self.assertEqual(len(records), 3)
+        by_key = {r["emoji_key"]: r for r in records}
+        self.assertEqual(by_key["unicode:🔥"]["count"], 3)
+        self.assertEqual(by_key["unicode:⭐"]["count"], 7)
+        custom = by_key["custom:123456789012345678"]
+        self.assertEqual(custom["count"], 2)
+        self.assertEqual(custom["emoji"], "<:party:123456789012345678>")
+        self.assertEqual(make_emoji_records(fake_message()), [])
+
+    def test_aggregate_totals_best_and_order(self):
+        records = [
+            emoji_record("🔥", "unicode:🔥", 3, 10),
+            emoji_record("🔥", "unicode:🔥", 9, 12),
+            emoji_record("⭐", "unicode:⭐", 20, 5),
+            emoji_record("🎉", "unicode:🎉", 50, 1, bot=True),
+        ]
+        items = aggregate_emojis(records, 10)
+        # Bot の投稿に付いた分も含むので 🎉 が1位
+        self.assertEqual([i["emoji"] for i in items], ["🎉", "⭐", "🔥"])
+        fire = items[2]
+        self.assertEqual(fire["total"], 12)
+        self.assertEqual(fire["messages"], 2)
+        self.assertEqual(fire["best"]["count"], 9)
+
+    def test_aggregate_tie_breaks_by_first_hit(self):
+        records = [
+            emoji_record("🔥", "unicode:🔥", 10, 20),
+            emoji_record("⭐", "unicode:⭐", 10, 3),
+        ]
+        items = aggregate_emojis(records, 10)
+        self.assertEqual(items[0]["emoji"], "⭐")
+
+    def test_aggregate_limit(self):
+        records = [emoji_record(f"e{i}", f"unicode:e{i}", 10 - i, 1)
+                   for i in range(5)]
+        self.assertEqual(len(aggregate_emojis(records, 2)), 2)
+
+
+class EmojiFormatTests(unittest.TestCase):
+    def test_emoji_pages_shape(self):
+        records = [
+            emoji_record("⭐", "unicode:⭐", 5, 10, snippet="一番の投稿"),
+            emoji_record("⭐", "unicode:⭐", 7, 12),
+            emoji_record("🔥", "unicode:🔥", 3, 5),
+        ]
+        items = aggregate_emojis(records, 10)
+        pages = format_emoji_pages(items, "過去1年", 500, 4)
+        self.assertEqual(len(pages), 1)
+        self.assertIn("## リアクション 絵文字ランキング（過去1年）", pages[0])
+        self.assertIn("### 1位　⭐×12", pages[0])
+        self.assertIn("対象メッセージ2件", pages[0])
+        self.assertIn("最多のメッセージ：⭐×7", pages[0])
+
+    def test_emoji_pages_empty(self):
+        pages = format_emoji_pages([], "過去1年", 10, 2)
+        self.assertEqual(len(pages), 1)
+        self.assertIn("見つからなかった", pages[0])
+
+
+class ScanEmojisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_scan_collects_all_emojis(self):
+        multi = fake_message(reactions=[
+            SimpleNamespace(emoji="⭐", count=4),
+            SimpleNamespace(emoji="🔥", count=2),
+        ])
+        none = fake_message()
+
+        async def history(limit=None, after=None):
+            for m in (multi, none):
+                yield m
+
+        channel = SimpleNamespace(history=history)
+        records = []
+        scanned = await scan_channel_emojis(channel, None, records)
+        self.assertEqual(scanned, 2)
+        self.assertEqual(len(records), 2)
+        self.assertEqual({r["emoji_key"] for r in records},
+                         {"unicode:⭐", "unicode:🔥"})
 
 
 if __name__ == "__main__":
